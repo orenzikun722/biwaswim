@@ -50,6 +50,6 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
-    implementation("com.github.mik3y:usb-serial-for-android:3.7.0")
-    implementation("org.maplibre.gl:android-sdk:13.0.2")
+    implementation(libs.usb.serial.for1.android)
+    implementation(libs.android.sdk)
 }
