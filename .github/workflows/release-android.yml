@@ -41,7 +41,7 @@ jobs:
         run: |
           mkdir -p release
 
-          cp app/build/outputs/apk/ble/release/*.apk \
+          cp app/build/outputs/apk/release/*.apk \
              release/biwaswim_v${{ inputs.version }}.apk
 
       - name: Create GitHub Release
