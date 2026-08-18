@@ -16,6 +16,16 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        versionCode =
+            providers.gradleProperty("versionCode")
+                .orElse("1")
+                .get()
+                .toInt()
+        versionName =
+            providers.gradleProperty("versionName")
+                .orElse("1.0")
+                .get()
     }
 
     buildTypes {
