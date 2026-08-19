@@ -30,12 +30,23 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-
+      - name: Restore keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > release-key.jks
       - name: Grant execute permission
         run: chmod +x ./gradlew
 
       - name: Build APK
-        run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease \
+          -PversionName=${{ inputs.version }} \
+          -PversionCode=${{ inputs.version_code }}
 
       - name: Prepare APKs
         run: |

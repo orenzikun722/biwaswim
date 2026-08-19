@@ -27,12 +27,21 @@ android {
                 .orElse("1.0")
                 .get()
     }
+    signingConfigs {
+        create("release") {
+            val keystoreFile = file("${rootProject.projectDir}/release-key.jks")
+
+            storeFile = keystoreFile
+            storePassword = System.getenv("KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("KEY_ALIAS")
+            keyPassword = System.getenv("KEY_PASSWORD")
+        }
+    }
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
         }
     }
     compileOptions {
