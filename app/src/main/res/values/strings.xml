@@ -2,4 +2,10 @@
     <string name="app_name">Biwa Swim</string>
     <string name="disconnected">Disconnected</string>
     <string name="connected">Connected</string>
+    <string name="needed_permission">Permission needed</string>
+    <string name="needed_notification_permission">Notification permissions are required to use this app. Please grant permission in the settings.</string>
+    <string name="needed_location_permission">Location permissions are required to use this app. Please grant permission in the settings.</string>
+    <string name="needed_nearby_permission">To use this app, permission is required to communicate with nearby devices. Please grant this permission in the settings.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="close_app">Close App</string>
 </resources>

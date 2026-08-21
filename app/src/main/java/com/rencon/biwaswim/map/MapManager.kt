@@ -68,7 +68,6 @@ class MapManager(
      * MapLibre インスタンスと MapView の初期化を行います。
      */
     fun initialize(savedInstanceState: Bundle?, onMapReady: (() -> Unit)? = null) {
-        MapLibre.getInstance(context)
         mapView.onCreate(savedInstanceState)
 
         mapView.getMapAsync { map ->

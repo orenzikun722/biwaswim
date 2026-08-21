@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Biwa Swim</string>
+    <string name="app_name">ビワスイム</string>
     <string name="disconnected">接続なし</string>
     <string name="connected">接続中</string>
+    <string name="needed_permission">権限が必要です</string>
+    <string name="needed_notification_permission">このアプリを使用するには通知の権限が必要です。設定から権限を許可してください。</string>
+    <string name="needed_location_permission">このアプリを使用するには位置情報の権限が必要です。設定から権限を許可してください。</string>
+    <string name="needed_nearby_permission">個のアプリを使用するには近くのデバイスとの通信のための権限が必要です。設定から権限を許可してください。</string>
+    <string name="open_settings">設定を開く</string>
+    <string name="close_app">アプリを閉じる</string>
 </resources>
