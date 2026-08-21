@@ -4,67 +4,84 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
 class NmeaParserTest {
 
-    private lateinit var parser: NmeaParser
-
-    @Before
-    fun setUp() {
-        parser = NmeaParser()
-    }
-
     @Test
-    fun testDmsToDecimal_latitude() {
-        // 例: 35度15分30秒 -> 35 + 15/60 + 30/3600 = 35 + 0.25 + 0.0083333... = 35.2583333...
-        val dms = "351530"
-        val decimal = parser.dmsToDecimal(dms, CoordinateType.LATITUDE)
-        val expected = 35.0 + (15.0 / 60.0) + (30.0 / 3600.0)
-        assertEquals(expected, decimal, 0.0001)
-    }
+    fun parsesValidGgaSentence() {
+        val line = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
+        val result = NmeaParser.parse(line)
+        assertTrue(result is NmeaParseResult.Parsed)
+        val event = (result as NmeaParseResult.Parsed).event
+        assertTrue(event is NmeaEvent.Gga)
+        val gga = event as NmeaEvent.Gga
 
-    @Test
-    fun testDmsToDecimal_longitude() {
-        // 例: 136度06分00秒 -> 136 + 6/60 + 0 = 136.1
-        val dms = "1360600"
-        val decimal = parser.dmsToDecimal(dms, CoordinateType.LONGITUDE)
-        val expected = 136.0 + (6.0 / 60.0)
-        assertEquals(expected, decimal, 0.0001)
-    }
+        assertEquals(48.1173, gga.latitude ?: 0.0, 0.000001)
+        assertEquals(11.516666, gga.longitude ?: 0.0, 0.000001)
+        assertEquals("123519", gga.utcTime)
+        assertEquals(1, gga.fixQuality)
+        assertEquals(8, gga.satellitesUsed)
+        assertEquals(0.9, gga.hdop ?: 0.0, 0.000001)
+        assertEquals(545.4, gga.altitudeMeters ?: 0.0, 0.000001)
 
-    @Test
-    fun testParseValidGngllSentence() {
-        // $GNGLL,3515.0000,N,13606.0000,E,123456.00,A,D*7B
-        val sentence = "\$GNGLL,351500,N,1360600,E,123456.00,A,D"
-        val location = parser.parseSentence(sentence)
-
+        // parseSentence check
+        val location = NmeaParser().parseSentence(line)
         assertNotNull(location)
-        assertEquals(35.25, location!!.latitude, 0.001)
-        assertEquals(136.1, location.longitude, 0.001)
+        assertEquals(48.1173, location!!.latitude, 0.000001)
+        assertEquals(11.516666, location.longitude, 0.000001)
+        assertEquals(545.4, location.altitudeMeters ?: 0.0, 0.000001)
+        assertEquals(8, location.satellites)
     }
 
     @Test
-    fun testParseOtherSentenceReturnsNull() {
-        val sentence = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
-        val location = parser.parseSentence(sentence)
+    fun parsesValidRmcSentence() {
+        val line = "\$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+        val result = NmeaParser.parse(line)
+        assertTrue(result is NmeaParseResult.Parsed)
+        val event = (result as NmeaParseResult.Parsed).event
+        assertTrue(event is NmeaEvent.Rmc)
+        val rmc = event as NmeaEvent.Rmc
 
-        assertNull(location)
+        assertEquals(48.1173, rmc.latitude ?: 0.0, 0.000001)
+        assertEquals(11.516666, rmc.longitude ?: 0.0, 0.000001)
+        assertEquals("A", rmc.status)
+        assertEquals(22.4, rmc.speedKnots ?: 0.0, 0.000001)
+        assertEquals(84.4, rmc.courseDegrees ?: 0.0, 0.000001)
+        assertEquals("230394", rmc.utcDate)
     }
 
     @Test
-    fun testParseRawDataWithBufferingAndNewlines() {
-        // データを2回に分けて送信するケース
-        val chunk1 = "\$GNGLL,351500,N,13".toByteArray(Charsets.UTF_8)
-        val chunk2 = "60600,E,123456.00,A,D\r\n".toByteArray(Charsets.UTF_8)
+    fun parsesSouthAndWestCoordinatesCorrectly() {
+        val lat = NmeaParser.parseCoordinate("3351.5000", "S")
+        val lon = NmeaParser.parseCoordinate("15112.5000", "W")
+        assertNotNull(lat)
+        assertNotNull(lon)
+        assertEquals(-(33.0 + 51.5 / 60.0), lat ?: 0.0, 0.000001)
+        assertEquals(-(151.0 + 12.5 / 60.0), lon ?: 0.0, 0.000001)
+    }
 
-        val result1 = parser.parseRawData(chunk1)
-        assertTrue(result1.isEmpty())
+    @Test
+    fun rejectsInvalidChecksum() {
+        val line = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*00"
+        val result = NmeaParser.parse(line)
+        assertEquals(NmeaParseResult.InvalidChecksum, result)
+        assertNull(NmeaParser().parseSentence(line))
+    }
 
-        val result2 = parser.parseRawData(chunk2)
-        assertEquals(1, result2.size)
-        assertEquals(35.25, result2[0].latitude, 0.001)
-        assertEquals(136.1, result2[0].longitude, 0.001)
+    @Test
+    fun acceptsSentenceWithoutChecksum() {
+        val line = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"
+        val result = NmeaParser.parse(line)
+        assertTrue(result is NmeaParseResult.Parsed)
+    }
+
+    @Test
+    fun parseRawDataReturnsLocations() {
+        val parser = NmeaParser()
+        val data = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n".toByteArray(Charsets.US_ASCII)
+        val locations = parser.parseRawData(data)
+        assertEquals(1, locations.size)
+        assertEquals(48.1173, locations[0].latitude, 0.000001)
     }
 }
