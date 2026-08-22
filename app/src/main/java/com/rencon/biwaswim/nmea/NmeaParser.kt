@@ -27,14 +27,25 @@ class NmeaParser {
     }
 
     /**
-     * 単一の NMEA センテンス文字列を解析して GpsLocation を返します。
-     * パース失敗、無効なチェックサム、または対象外のセンテンスの場合は null を返します。
+     * 受信した生のバイト列から完全な NMEA センテンスを抽出し、
+     * 解析結果の詳細 (NmeaParseDetail) のリストを返します。
      */
-    fun parseSentence(sentence: String): GpsLocation? {
-        val result = parse(sentence)
-        return when (result) {
+    fun parseRawDataWithDetails(data: ByteArray): List<NmeaParseDetail> {
+        val lines = lineBuffer.append(data)
+        val details = mutableListOf<NmeaParseDetail>()
+        for (line in lines) {
+            details.add(parseSentenceDetail(line))
+        }
+        return details
+    }
+
+    /**
+     * 単一の NMEA センテンス文字列を詳細に解析して NmeaParseDetail を返します。
+     */
+    fun parseSentenceDetail(sentence: String): NmeaParseDetail {
+        return when (val result = parse(sentence)) {
             is NmeaParseResult.Parsed -> {
-                when (val event = result.event) {
+                val location = when (val event = result.event) {
                     is NmeaEvent.Gga -> {
                         val lat = event.latitude
                         val lng = event.longitude
@@ -75,9 +86,25 @@ class NmeaParser {
                         } else null
                     }
                 }
+                if (location != null) {
+                    NmeaParseDetail.LocationUpdate(location, result.event.sentenceType)
+                } else {
+                    NmeaParseDetail.NoFix(result.event.sentenceType)
+                }
             }
-            else -> null
+            is NmeaParseResult.InvalidChecksum -> NmeaParseDetail.InvalidChecksum(sentence)
+            is NmeaParseResult.Malformed -> NmeaParseDetail.Malformed(sentence)
+            is NmeaParseResult.Unsupported -> NmeaParseDetail.Unsupported(result.sentenceType)
         }
+    }
+
+    /**
+     * 単一の NMEA センテンス文字列を解析して GpsLocation を返します。
+     * パース失敗、無効なチェックサム、または対象外のセンテンスの場合は null を返します。
+     */
+    fun parseSentence(sentence: String): GpsLocation? {
+        val detail = parseSentenceDetail(sentence)
+        return (detail as? NmeaParseDetail.LocationUpdate)?.location
     }
 
     /**
@@ -199,6 +226,17 @@ sealed interface NmeaParseResult {
     data class Unsupported(val sentenceType: String) : NmeaParseResult
     data object InvalidChecksum : NmeaParseResult
     data object Malformed : NmeaParseResult
+}
+
+/**
+ * NMEAパース結果の詳細。UI通知や受信品質判定に使用します。
+ */
+sealed interface NmeaParseDetail {
+    data class LocationUpdate(val location: GpsLocation, val sentenceType: String) : NmeaParseDetail
+    data class NoFix(val sentenceType: String) : NmeaParseDetail
+    data class Unsupported(val sentenceType: String) : NmeaParseDetail
+    data class InvalidChecksum(val rawSentence: String) : NmeaParseDetail
+    data class Malformed(val rawSentence: String) : NmeaParseDetail
 }
 
 sealed interface NmeaEvent {

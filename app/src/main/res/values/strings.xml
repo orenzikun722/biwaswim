@@ -17,4 +17,9 @@
     <string name="needed_nearby_permission">To use this app, permission is required to communicate with nearby devices. Please grant this permission in the settings.</string>
     <string name="open_settings">Open settings</string>
     <string name="close_app">Close App</string>
+    <string name="status_warning_no_data">%1$s (Waiting Data)</string>
+    <string name="status_warning_timeout">%1$s (No Data)</string>
+    <string name="status_warning_checksum">%1$s (Checksum Error)</string>
+    <string name="status_warning_malformed">%1$s (Data Error)</string>
+    <string name="status_warning_no_fix">%1$s (No Fix)</string>
 </resources>

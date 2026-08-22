@@ -20,21 +20,69 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.lifecycleScope
 import com.rencon.biwaswim.bluetooth.BluetoothGpsListener
 import com.rencon.biwaswim.bluetooth.BluetoothGpsManager
 import com.rencon.biwaswim.bluetooth.DiscoveredBluetoothDevice
 import com.rencon.biwaswim.map.MapManager
 import com.rencon.biwaswim.nmea.GpsLocation
+import com.rencon.biwaswim.nmea.NmeaParseDetail
 import com.rencon.biwaswim.nmea.NmeaParser
 import com.rencon.biwaswim.permission.checkPermission
 import com.rencon.biwaswim.usb.UsbSerialListener
 import com.rencon.biwaswim.usb.UsbSerialManager
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 
 class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListener {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val INITIAL_DATA_WAIT_MS = 3000L
+        private const val DATA_TIMEOUT_MS = 4000L
+        private const val ERROR_HOLD_MS = 3000L
+    }
+
+    private class ConnectionHealth {
+        var isConnected: Boolean = false
+        var connectedAt: Long = 0L
+        var lastDataReceivedTime: Long = 0L
+        var lastValidLocationTime: Long = 0L
+        var lastChecksumErrorTime: Long = 0L
+        var lastMalformedTime: Long = 0L
+        var lastNoFixTime: Long = 0L
+
+        fun onConnected() {
+            isConnected = true
+            connectedAt = System.currentTimeMillis()
+            lastDataReceivedTime = 0L
+            lastValidLocationTime = 0L
+            lastChecksumErrorTime = 0L
+            lastMalformedTime = 0L
+            lastNoFixTime = 0L
+        }
+
+        fun onDisconnected() {
+            isConnected = false
+            connectedAt = 0L
+            lastDataReceivedTime = 0L
+            lastValidLocationTime = 0L
+            lastChecksumErrorTime = 0L
+            lastMalformedTime = 0L
+            lastNoFixTime = 0L
+        }
+    }
+
+    private enum class HealthStatus {
+        HEALTHY,           // 正常に測位中
+        WAITING_DATA,      // 接続直後（データ待機中）
+        TIMEOUT,           // データ未受信・途絶
+        CHECKSUM_ERROR,    // チェックサムエラー
+        MALFORMED,         // データフォーマット異常
+        NO_FIX             // 測位中（有効なFixなし）
     }
 
     private lateinit var connectionStatus: TextView
@@ -47,9 +95,10 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
     private val dialogs = mutableListOf<AlertDialog>()
     private var selectionDialog: AlertDialog? = null
 
-    private var isUsbConnected = false
-    private var isBluetoothConnected = false
+    private val usbHealth = ConnectionHealth()
+    private val btHealth = ConnectionHealth()
     private var connectedBluetoothDeviceName: String? = null
+    private var healthMonitorJob: Job? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -218,40 +267,118 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
         }
     }
 
-    // --- UsbSerialListener 実装 ---
+    private fun ConnectionHealth.evaluateStatus(now: Long): HealthStatus {
+        if (!isConnected) return HealthStatus.TIMEOUT
 
-    override fun onConnected() {
-        isUsbConnected = true
-        updateOverallConnectionStatus()
+        val hasRecentValidLocation = (lastValidLocationTime > 0 && now - lastValidLocationTime < DATA_TIMEOUT_MS)
+
+        // 1. 直近でエラーが発生している場合（まだ正常な位置情報が得られていない場合）
+        if (lastChecksumErrorTime > 0 && now - lastChecksumErrorTime < ERROR_HOLD_MS && !hasRecentValidLocation) {
+            return HealthStatus.CHECKSUM_ERROR
+        }
+
+        if (lastMalformedTime > 0 && now - lastMalformedTime < ERROR_HOLD_MS && !hasRecentValidLocation) {
+            return HealthStatus.MALFORMED
+        }
+
+        // 2. データ受信の有無・タイムアウト判定
+        if (lastDataReceivedTime == 0L) {
+            return if (now - connectedAt < INITIAL_DATA_WAIT_MS) {
+                HealthStatus.WAITING_DATA
+            } else {
+                HealthStatus.TIMEOUT
+            }
+        }
+
+        if (now - lastDataReceivedTime >= DATA_TIMEOUT_MS) {
+            return HealthStatus.TIMEOUT
+        }
+
+        // 3. 有効な位置情報が得られているか
+        if (hasRecentValidLocation) {
+            return HealthStatus.HEALTHY
+        }
+
+        // 4. データは届いているが衛星未捕捉 (No Fix)
+        return HealthStatus.NO_FIX
     }
 
-    override fun onDisconnected() {
-        isUsbConnected = false
-        updateOverallConnectionStatus()
-    }
+    private fun handleNmeaDetail(detail: NmeaParseDetail, isUsb: Boolean) {
+        val health = if (isUsb) usbHealth else btHealth
+        val now = System.currentTimeMillis()
+        health.lastDataReceivedTime = now
 
-    override fun onRawDataReceived(data: ByteArray) {
-        val locations = nmeaParser.parseRawData(data)
-        if (locations.isNotEmpty()) {
-            val latestLocation = locations.last()
-            runOnUiThread {
-                mapManager.updateLocation(
-                    latitude = latestLocation.latitude,
-                    longitude = latestLocation.longitude
-                )
+        when (detail) {
+            is NmeaParseDetail.LocationUpdate -> {
+                health.lastValidLocationTime = now
+                runOnUiThread {
+                    mapManager.updateLocation(
+                        latitude = detail.location.latitude,
+                        longitude = detail.location.longitude
+                    )
+                }
+            }
+            is NmeaParseDetail.NoFix -> {
+                health.lastNoFixTime = now
+            }
+            is NmeaParseDetail.InvalidChecksum -> {
+                health.lastChecksumErrorTime = now
+                Log.w(TAG, "NMEA Checksum error (${if (isUsb) "USB" else "BT"}): ${detail.rawSentence}")
+            }
+            is NmeaParseDetail.Malformed -> {
+                health.lastMalformedTime = now
+                Log.w(TAG, "NMEA Malformed sentence (${if (isUsb) "USB" else "BT"}): ${detail.rawSentence}")
+            }
+            is NmeaParseDetail.Unsupported -> {
+                // GSV, GSA などの補助センテンス（正常ストリームの一部）
             }
         }
     }
 
+    private fun startHealthMonitor() {
+        healthMonitorJob?.cancel()
+        healthMonitorJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(1000)
+                updateOverallConnectionStatus()
+            }
+        }
+    }
+
+    private fun stopHealthMonitor() {
+        healthMonitorJob?.cancel()
+        healthMonitorJob = null
+    }
+
+    // --- UsbSerialListener 実装 ---
+
+    override fun onConnected() {
+        usbHealth.onConnected()
+        updateOverallConnectionStatus()
+    }
+
+    override fun onDisconnected() {
+        usbHealth.onDisconnected()
+        updateOverallConnectionStatus()
+    }
+
+    override fun onRawDataReceived(data: ByteArray) {
+        val details = nmeaParser.parseRawDataWithDetails(data)
+        for (detail in details) {
+            handleNmeaDetail(detail, isUsb = true)
+        }
+        updateOverallConnectionStatus()
+    }
+
     override fun onError(exception: Exception) {
-        isUsbConnected = false
+        usbHealth.onDisconnected()
         updateOverallConnectionStatus()
     }
 
     // --- BluetoothGpsListener 実装 ---
 
     override fun onBluetoothConnected(device: BluetoothDevice) {
-        isBluetoothConnected = true
+        btHealth.onConnected()
         connectedBluetoothDeviceName = try {
             device.name ?: device.address
         } catch (e: Exception) {
@@ -262,26 +389,30 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
     }
 
     override fun onBluetoothDisconnected() {
-        isBluetoothConnected = false
+        btHealth.onDisconnected()
         connectedBluetoothDeviceName = null
         Log.d(TAG, "Bluetooth GNSS disconnected")
         updateOverallConnectionStatus()
     }
 
     override fun onBluetoothError(exception: Exception) {
-        isBluetoothConnected = false
+        btHealth.onDisconnected()
         connectedBluetoothDeviceName = null
         Log.e(TAG, "Bluetooth GNSS error: ${exception.message}", exception)
         updateOverallConnectionStatus()
     }
 
+    override fun onRawNmeaReceived(line: String) {
+        btHealth.lastDataReceivedTime = System.currentTimeMillis()
+    }
+
+    override fun onNmeaParseDetail(detail: NmeaParseDetail) {
+        handleNmeaDetail(detail, isUsb = false)
+        updateOverallConnectionStatus()
+    }
+
     override fun onLocationReceived(location: GpsLocation) {
-        runOnUiThread {
-            mapManager.updateLocation(
-                latitude = location.latitude,
-                longitude = location.longitude
-            )
-        }
+        // handleNmeaDetail で処理されるためここでは追加処理なし
     }
 
     override fun onMultipleDevicesFound(devices: List<DiscoveredBluetoothDevice>) {
@@ -359,37 +490,67 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
     }
 
     /**
-     * USBおよびBluetoothの接続状況（および接続先デバイス名）に応じてステータス表示を更新します。
+     * USBおよびBluetoothの接続・受信状況（およびエラー警告）に応じてステータス表示を更新します。
      */
     private fun updateOverallConnectionStatus() {
-        val isConnected = isUsbConnected || isBluetoothConnected
-        runOnUiThread {
-            if (::connectionStatus.isInitialized) {
-                val colorRes = if (isConnected) R.color.connected else R.color.disconnected
-                connectionStatus.setBackgroundColor(ContextCompat.getColor(this, colorRes))
+        val now = System.currentTimeMillis()
+        val isUsbConnected = usbHealth.isConnected
+        val isBtConnected = btHealth.isConnected
 
-                val statusText = when {
-                    isUsbConnected && isBluetoothConnected -> {
-                        val btName = connectedBluetoothDeviceName ?: "BT"
+        runOnUiThread {
+            if (!::connectionStatus.isInitialized) return@runOnUiThread
+
+            if (!isUsbConnected && !isBtConnected) {
+                connectionStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.disconnected))
+                connectionStatus.text = getString(R.string.disconnected)
+                return@runOnUiThread
+            }
+
+            val btName = connectedBluetoothDeviceName ?: "BT"
+            val btStatus = if (isBtConnected) btHealth.evaluateStatus(now) else null
+            val usbStatus = if (isUsbConnected) usbHealth.evaluateStatus(now) else null
+
+            val hasWarning = (btStatus != null && btStatus != HealthStatus.HEALTHY) ||
+                    (usbStatus != null && usbStatus != HealthStatus.HEALTHY)
+
+            val colorRes = if (hasWarning) R.color.warning else R.color.connected
+            connectionStatus.setBackgroundColor(ContextCompat.getColor(this, colorRes))
+
+            val statusText = when {
+                isUsbConnected && isBtConnected -> {
+                    val usbText = formatSourceStatus("USB", usbStatus ?: HealthStatus.TIMEOUT)
+                    val btText = formatSourceStatus("BT: $btName", btStatus ?: HealthStatus.TIMEOUT)
+                    if (!hasWarning) {
                         getString(R.string.connected_both, btName)
-                    }
-                    isUsbConnected -> {
-                        getString(R.string.connected_usb)
-                    }
-                    isBluetoothConnected -> {
-                        val btName = connectedBluetoothDeviceName
-                        if (btName != null) {
-                            getString(R.string.connected_bluetooth, btName)
-                        } else {
-                            getString(R.string.connected_bluetooth_simple)
-                        }
-                    }
-                    else -> {
-                        getString(R.string.disconnected)
+                    } else {
+                        "$usbText | $btText"
                     }
                 }
-                connectionStatus.text = statusText
+                isUsbConnected -> {
+                    formatSourceStatus(getString(R.string.connected_usb), usbStatus ?: HealthStatus.TIMEOUT)
+                }
+                isBtConnected -> {
+                    val baseName = if (connectedBluetoothDeviceName != null) {
+                        getString(R.string.connected_bluetooth, connectedBluetoothDeviceName)
+                    } else {
+                        getString(R.string.connected_bluetooth_simple)
+                    }
+                    formatSourceStatus(baseName, btStatus ?: HealthStatus.TIMEOUT)
+                }
+                else -> getString(R.string.disconnected)
             }
+            connectionStatus.text = statusText
+        }
+    }
+
+    private fun formatSourceStatus(name: String, status: HealthStatus): String {
+        return when (status) {
+            HealthStatus.HEALTHY -> name
+            HealthStatus.WAITING_DATA -> getString(R.string.status_warning_no_data, name)
+            HealthStatus.TIMEOUT -> getString(R.string.status_warning_timeout, name)
+            HealthStatus.CHECKSUM_ERROR -> getString(R.string.status_warning_checksum, name)
+            HealthStatus.MALFORMED -> getString(R.string.status_warning_malformed, name)
+            HealthStatus.NO_FIX -> getString(R.string.status_warning_no_fix, name)
         }
     }
 
@@ -403,6 +564,7 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
     override fun onResume() {
         super.onResume()
         mapManager.onResume()
+        startHealthMonitor()
         if (openedSettings) {
             openedSettings = false
             if (!checkPermission.checkLocationPermission(context)) {
@@ -429,6 +591,7 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
 
     override fun onPause() {
         super.onPause()
+        stopHealthMonitor()
         mapManager.onPause()
     }
 

@@ -84,4 +84,76 @@ class NmeaParserTest {
         assertEquals(1, locations.size)
         assertEquals(48.1173, locations[0].latitude, 0.000001)
     }
+
+    @Test
+    fun parseSentenceDetailReturnsLocationUpdateOnValidSentence() {
+        val parser = NmeaParser()
+        val line = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
+        val detail = parser.parseSentenceDetail(line)
+        assertTrue(detail is NmeaParseDetail.LocationUpdate)
+        val update = detail as NmeaParseDetail.LocationUpdate
+        assertEquals(48.1173, update.location.latitude, 0.000001)
+        assertEquals(11.516666, update.location.longitude, 0.000001)
+        assertEquals("GPGGA", update.sentenceType)
+    }
+
+    @Test
+    fun parseSentenceDetailReturnsNoFixWhenGgaHasNoFixQuality() {
+        val parser = NmeaParser()
+        val line = "\$GPGGA,123519,4807.038,N,01131.000,E,0,08,0.9,545.4,M,46.9,M,,"
+        val detail = parser.parseSentenceDetail(line)
+        assertTrue(detail is NmeaParseDetail.NoFix)
+        assertEquals("GPGGA", (detail as NmeaParseDetail.NoFix).sentenceType)
+        assertNull(parser.parseSentence(line))
+    }
+
+    @Test
+    fun parseSentenceDetailReturnsNoFixWhenRmcStatusIsVoid() {
+        val parser = NmeaParser()
+        val line = "\$GPRMC,123519,V,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W"
+        val detail = parser.parseSentenceDetail(line)
+        assertTrue(detail is NmeaParseDetail.NoFix)
+        assertEquals("GPRMC", (detail as NmeaParseDetail.NoFix).sentenceType)
+        assertNull(parser.parseSentence(line))
+    }
+
+    @Test
+    fun parseSentenceDetailReturnsInvalidChecksum() {
+        val parser = NmeaParser()
+        val line = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*00"
+        val detail = parser.parseSentenceDetail(line)
+        assertTrue(detail is NmeaParseDetail.InvalidChecksum)
+        assertEquals(line, (detail as NmeaParseDetail.InvalidChecksum).rawSentence)
+    }
+
+    @Test
+    fun parseSentenceDetailReturnsMalformedOnCorruptedString() {
+        val parser = NmeaParser()
+        val line = "BAD_STRING_WITHOUT_START"
+        val detail = parser.parseSentenceDetail(line)
+        assertTrue(detail is NmeaParseDetail.Malformed)
+    }
+
+    @Test
+    fun parseSentenceDetailReturnsUnsupportedForGsvSentence() {
+        val parser = NmeaParser()
+        val line = "\$GPGSV,2,1,08,01,40,083,46,02,17,308,41,12,07,344,39,14,66,039,45"
+        val detail = parser.parseSentenceDetail(line)
+        assertTrue(detail is NmeaParseDetail.Unsupported)
+        assertEquals("GPGSV", (detail as NmeaParseDetail.Unsupported).sentenceType)
+    }
+
+    @Test
+    fun parseRawDataWithDetailsExtractsMultipleDetails() {
+        val parser = NmeaParser()
+        val raw = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*00\r\n" +
+                "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n" +
+                "\$GPGSV,2,1,08,01,40,083,46,02,17,308,41,12,07,344,39,14,66,039,45\r\n"
+
+        val details = parser.parseRawDataWithDetails(raw.toByteArray(Charsets.US_ASCII))
+        assertEquals(3, details.size)
+        assertTrue(details[0] is NmeaParseDetail.InvalidChecksum)
+        assertTrue(details[1] is NmeaParseDetail.LocationUpdate)
+        assertTrue(details[2] is NmeaParseDetail.Unsupported)
+    }
 }

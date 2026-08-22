@@ -2,6 +2,7 @@ package com.rencon.biwaswim.bluetooth
 
 import android.bluetooth.BluetoothDevice
 import com.rencon.biwaswim.nmea.GpsLocation
+import com.rencon.biwaswim.nmea.NmeaParseDetail
 
 /**
  * スキャンで検出されたBluetoothデバイス情報。
@@ -41,6 +42,11 @@ interface BluetoothGpsListener {
      * 生のNMEA行を受信した際に呼ばれます（オプション）。
      */
     fun onRawNmeaReceived(line: String) {}
+
+    /**
+     * NMEAセンテンスのパース詳細（位置更新、NoFix、チェックサムエラー、構文異常など）を受信した際に呼ばれます。
+     */
+    fun onNmeaParseDetail(detail: NmeaParseDetail) {}
 
     /**
      * 接続や読み取り中にエラーが発生した際に呼ばれます。

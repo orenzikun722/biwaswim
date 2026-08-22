@@ -4,5 +4,6 @@
     <color name="white">#FFFFFFFF</color>
     <color name="disconnected">#FFFFAAAA</color>
     <color name="connected">#FFAAFFAA</color>
+    <color name="warning">#FFFFD54F</color>
     <color name="background">#FFAAAAAA</color>
 </resources>

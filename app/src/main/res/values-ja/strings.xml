@@ -3,10 +3,24 @@
     <string name="app_name">ビワスイム</string>
     <string name="disconnected">接続なし</string>
     <string name="connected">接続中</string>
+    <string name="connected_usb">USB接続中</string>
+    <string name="connected_bluetooth">BT: %1$s</string>
+    <string name="connected_bluetooth_simple">Bluetooth接続中</string>
+    <string name="connected_both">USB &amp; BT: %1$s</string>
+    <string name="select_bluetooth_device">Bluetoothデバイス選択</string>
+    <string name="scanning_bluetooth">デバイスを検索中...</string>
+    <string name="rescan">再検索</string>
+    <string name="cancel">キャンセル</string>
+    <string name="no_device_found">Bluetoothデバイスが見つかりません</string>
     <string name="needed_permission">権限が必要です</string>
     <string name="needed_notification_permission">このアプリを使用するには通知の権限が必要です。設定から権限を許可してください。</string>
     <string name="needed_location_permission">このアプリを使用するには位置情報の権限が必要です。設定から権限を許可してください。</string>
-    <string name="needed_nearby_permission">個のアプリを使用するには近くのデバイスとの通信のための権限が必要です。設定から権限を許可してください。</string>
+    <string name="needed_nearby_permission">このアプリを使用するには近くのデバイスとの通信のための権限が必要です。設定から権限を許可してください。</string>
     <string name="open_settings">設定を開く</string>
     <string name="close_app">アプリを閉じる</string>
+    <string name="status_warning_no_data">%1$s (データ待機中)</string>
+    <string name="status_warning_timeout">%1$s (データ未受信)</string>
+    <string name="status_warning_checksum">%1$s (チェックサムエラー)</string>
+    <string name="status_warning_malformed">%1$s (データ異常)</string>
+    <string name="status_warning_no_fix">%1$s (測位中)</string>
 </resources>

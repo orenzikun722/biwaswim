@@ -12,6 +12,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.rencon.biwaswim.nmea.NmeaLineBuffer
+import com.rencon.biwaswim.nmea.NmeaParseDetail
 import com.rencon.biwaswim.nmea.NmeaParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -297,11 +298,12 @@ class BluetoothGpsManager(
                 val stopReason = session.readLoop { chunk ->
                     val lines = lineBuffer.append(chunk.text)
                     for (line in lines) {
-                        listener.onRawNmeaReceived(line)
-                        val location = nmeaParser.parseSentence(line)
-                        if (location != null) {
-                            withContext(Dispatchers.Main) {
-                                listener.onLocationReceived(location)
+                        val detail = nmeaParser.parseSentenceDetail(line)
+                        withContext(Dispatchers.Main) {
+                            listener.onRawNmeaReceived(line)
+                            listener.onNmeaParseDetail(detail)
+                            if (detail is NmeaParseDetail.LocationUpdate) {
+                                listener.onLocationReceived(detail.location)
                             }
                         }
                     }
