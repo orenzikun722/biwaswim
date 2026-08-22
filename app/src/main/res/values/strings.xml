@@ -2,6 +2,15 @@
     <string name="app_name">Biwa Swim</string>
     <string name="disconnected">Disconnected</string>
     <string name="connected">Connected</string>
+    <string name="connected_usb">USB Connected</string>
+    <string name="connected_bluetooth">BT: %1$s</string>
+    <string name="connected_bluetooth_simple">Bluetooth Connected</string>
+    <string name="connected_both">USB &amp; BT: %1$s</string>
+    <string name="select_bluetooth_device">Select Bluetooth Device</string>
+    <string name="scanning_bluetooth">Scanning for devices...</string>
+    <string name="rescan">Rescan</string>
+    <string name="cancel">Cancel</string>
+    <string name="no_device_found">No Bluetooth devices found</string>
     <string name="needed_permission">Permission needed</string>
     <string name="needed_notification_permission">Notification permissions are required to use this app. Please grant permission in the settings.</string>
     <string name="needed_location_permission">Location permissions are required to use this app. Please grant permission in the settings.</string>
