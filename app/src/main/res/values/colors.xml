@@ -6,4 +6,5 @@
     <color name="connected">#FFAAFFAA</color>
     <color name="warning">#FFFFD54F</color>
     <color name="background">#FFAAAAAA</color>
+    <color name="distance_from_shore_bg">#004BAF</color>
 </resources>

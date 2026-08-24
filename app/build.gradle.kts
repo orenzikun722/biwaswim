@@ -61,4 +61,6 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     implementation(libs.usb.serial.for1.android)
     implementation(libs.android.sdk)
+    implementation(libs.jts.core)
+    implementation(libs.jts.io.common)
 }

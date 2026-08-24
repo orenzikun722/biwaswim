@@ -5,12 +5,16 @@ import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +40,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
+import com.rencon.biwaswim.nmea.calculateDistance
+import org.locationtech.jts.algorithm.Distance
+import org.maplibre.android.maps.MapView
 
 class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListener {
 
@@ -44,8 +51,8 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
         private const val INITIAL_DATA_WAIT_MS = 3000L
         private const val DATA_TIMEOUT_MS = 4000L
         private const val ERROR_HOLD_MS = 3000L
-    }
 
+    }
     private class ConnectionHealth {
         var isConnected: Boolean = false
         var connectedAt: Long = 0L
@@ -99,6 +106,11 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
     private val btHealth = ConnectionHealth()
     private var connectedBluetoothDeviceName: String? = null
     private var healthMonitorJob: Job? = null
+    private lateinit var distanceFromShore: TextView
+    private lateinit var mapView: MapView
+    private lateinit var mainView: View
+    private lateinit var overlayDrawable: Drawable
+    private val STROKE_WIDTH = 12
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -188,7 +200,6 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
             }
         }
     }
-
     private fun requestPermissions() {
         val permissions = buildList {
             if (!checkPermission.checkBluetoothPermission(context)) {
@@ -218,8 +229,11 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
 
         setContentView(R.layout.activity_main)
 
-        mapManager = MapManager(this, findViewById(R.id.mapView))
+        mapView = findViewById(R.id.mapView)
+        mapManager = MapManager(this, mapView)
+
         mapManager.initialize(savedInstanceState)
+        mainView = findViewById(R.id.main)
 
         setupWindowInsets()
 
@@ -228,6 +242,19 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
             if (::bluetoothGpsManager.isInitialized) {
                 showManualDeviceSelectionDialog()
             }
+        }
+        distanceFromShore = findViewById<TextView>(R.id.distanceFromShore)
+
+        overlayDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.TRANSPARENT) // 背景を透明に
+            setStroke(STROKE_WIDTH, Color.BLUE) // 線の太さと色
+        }
+
+        mapView.post {
+            overlayDrawable.setBounds(0, 0, mapView.width, mapView.height)
+            mapView.overlay.clear()
+            mapView.overlay.add(overlayDrawable)
         }
 
         requestPermissions()
@@ -311,11 +338,24 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
         when (detail) {
             is NmeaParseDetail.LocationUpdate -> {
                 health.lastValidLocationTime = now
+
+                val distance = calculateDistance(context, detail.location.latitude, detail.location.longitude)
                 runOnUiThread {
                     mapManager.updateLocation(
                         latitude = detail.location.latitude,
                         longitude = detail.location.longitude
                     )
+                    if(::distanceFromShore.isInitialized){
+                        val distancestr = distance.toInt().toString()
+                        distanceFromShore.text = distancestr + "m"
+                        distanceFromShore.visibility = View.VISIBLE
+                        val color = when {
+                            distance < 20f -> Color.GREEN
+                            distance < 30f -> Color.rgb(255, 165, 0) // オレンジ
+                            else -> Color.RED
+                        }
+                        (overlayDrawable.mutate() as? GradientDrawable)?.setStroke(STROKE_WIDTH, color)
+                    }
                 }
             }
             is NmeaParseDetail.NoFix -> {
@@ -408,6 +448,7 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
 
     override fun onNmeaParseDetail(detail: NmeaParseDetail) {
         handleNmeaDetail(detail, isUsb = false)
+
         updateOverallConnectionStatus()
     }
 

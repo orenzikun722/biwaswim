@@ -16,6 +16,7 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import com.rencon.biwaswim.nmea.calculateDistance
 
 /**
  * MapLibre 地図の初期化、スタイル設定、マーカーレイヤーの管理、ライフサイクル委譲を行うクラス。
@@ -118,7 +119,6 @@ class MapManager(
         currentLongitude = longitude
         applyMarkerLocation(latitude, longitude)
     }
-
     private fun applyMarkerLocation(latitude: Double, longitude: Double) {
         markerSource?.setGeoJson(Point.fromLngLat(longitude, latitude))
         markerLayer?.setProperties(PropertyFactory.visibility(Property.VISIBLE))

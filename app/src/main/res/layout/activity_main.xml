@@ -27,4 +27,31 @@
         android:padding="5dp"
         android:textSize="30sp"
         android:text="@string/disconnected"/>
+    <TextView
+        android:id="@+id/distanceFromShore"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        android:layout_marginTop="30dp"
+        android:layout_marginStart="10dp"
+        android:textSize="30sp"
+        android:textColor="@color/white"
+        android:text=""
+        android:visibility="invisible"
+        android:background="@color/distance_from_shore_bg"
+        android:padding="5dp"/>
+    <TextView
+        android:id="@+id/attribution"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:padding="4dp"
+        android:text="@string/attribution_gsi"
+        android:textSize="11sp"
+        android:background="#CCFFFFFF"
+        android:textColor="@color/black"/>
+
 </androidx.constraintlayout.widget.ConstraintLayout>

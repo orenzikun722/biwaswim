@@ -22,4 +22,5 @@
     <string name="status_warning_checksum">%1$s (Checksum Error)</string>
     <string name="status_warning_malformed">%1$s (Data Error)</string>
     <string name="status_warning_no_fix">%1$s (No Fix)</string>
+    <string name="attribution_gsi">© GSI of Japan</string>
 </resources>

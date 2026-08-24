@@ -23,4 +23,5 @@
     <string name="status_warning_checksum">%1$s (チェックサムエラー)</string>
     <string name="status_warning_malformed">%1$s (データ異常)</string>
     <string name="status_warning_no_fix">%1$s (測位中)</string>
+    <string name="attribution_gsi">© 国土地理院</string>
 </resources>
