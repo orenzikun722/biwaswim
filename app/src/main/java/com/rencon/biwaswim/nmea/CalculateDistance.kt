@@ -44,3 +44,22 @@ fun calculateDistance(context: Context, latitude: Double, longitude: Double) : D
                 lonMeters.pow(2)
     )
 }
+
+fun isSwimming(context: Context, latitude: Double, longitude: Double): Boolean {
+    val geoJson = context.assets
+        .open("biwako.geojson")
+        .bufferedReader()
+        .use { it.readText() }
+    val geometry = GeoJsonReader().read(
+        JSONObject(geoJson)
+            .getJSONArray("features")
+            .getJSONObject(0)
+            .getJSONObject("geometry")
+            .toString()
+    )
+    val factory = GeometryFactory()
+    val point = factory.createPoint(
+        Coordinate(longitude, latitude)
+    )
+    return geometry.contains(point)
+}

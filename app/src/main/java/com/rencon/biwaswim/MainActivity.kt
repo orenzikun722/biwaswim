@@ -1,10 +1,14 @@
 package com.rencon.biwaswim
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.bluetooth.BluetoothDevice
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.content.ServiceConnection
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -12,10 +16,10 @@ import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -26,25 +30,25 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.rencon.biwaswim.bluetooth.BluetoothGpsListener
-import com.rencon.biwaswim.bluetooth.BluetoothGpsManager
 import com.rencon.biwaswim.bluetooth.DiscoveredBluetoothDevice
 import com.rencon.biwaswim.map.MapManager
 import com.rencon.biwaswim.nmea.GpsLocation
 import com.rencon.biwaswim.nmea.NmeaParseDetail
 import com.rencon.biwaswim.nmea.NmeaParser
 import com.rencon.biwaswim.permission.checkPermission
+import com.rencon.biwaswim.service.GpsConnectionService
 import com.rencon.biwaswim.usb.UsbSerialListener
-import com.rencon.biwaswim.usb.UsbSerialManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import com.rencon.biwaswim.nmea.calculateDistance
-import org.locationtech.jts.algorithm.Distance
+import com.rencon.biwaswim.nmea.isSwimming
+import com.rencon.biwaswim.notification.sendNotification
 import org.maplibre.android.maps.MapView
 
-class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListener {
+class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
     companion object {
         private const val TAG = "MainActivity"
@@ -94,8 +98,6 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
 
     private lateinit var connectionStatus: TextView
     private lateinit var mapManager: MapManager
-    private lateinit var usbSerialManager: UsbSerialManager
-    private lateinit var bluetoothGpsManager: BluetoothGpsManager
     private val nmeaParser = NmeaParser()
     private lateinit var context: Context
     private var openedSettings = false
@@ -111,6 +113,36 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
     private lateinit var mainView: View
     private lateinit var overlayDrawable: Drawable
     private val STROKE_WIDTH = 12
+    private lateinit var farWarningChannel: NotificationChannel
+    private lateinit var weatherWarningChannel: NotificationChannel
+    private lateinit var swimmingDetailChannel: NotificationChannel
+    private lateinit var spawnedFarWarningNotification: Notification
+
+    // --- GpsConnectionService バインド ---
+    private var gpsService: GpsConnectionService? = null
+    private var serviceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val localBinder = binder as GpsConnectionService.LocalBinder
+            gpsService = localBinder.getService()
+            gpsService?.setServiceListener(this@MainActivity)
+            serviceBound = true
+            Log.d(TAG, "GpsConnectionService bound")
+            // バインド後に接続状態を同期して表示更新
+            usbHealth.isConnected = gpsService?.isUsbConnected ?: false
+            btHealth.isConnected = gpsService?.isBtConnected ?: false
+            connectedBluetoothDeviceName = gpsService?.connectedBluetoothDeviceName
+            updateOverallConnectionStatus()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            gpsService?.setServiceListener(null)
+            gpsService = null
+            serviceBound = false
+            Log.d(TAG, "GpsConnectionService unbound")
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -221,7 +253,6 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         context = this
@@ -239,7 +270,7 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
 
         connectionStatus = findViewById(R.id.connectionStatus)
         connectionStatus.setOnClickListener {
-            if (::bluetoothGpsManager.isInitialized) {
+            if (gpsService != null) {
                 showManualDeviceSelectionDialog()
             }
         }
@@ -256,20 +287,37 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
             mapView.overlay.clear()
             mapView.overlay.add(overlayDrawable)
         }
+        val manager = getSystemService(NotificationManager::class.java)
+        farWarningChannel = NotificationChannel(
+            "farWarning",
+            "岸から離れすぎたときの通知",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+
+        weatherWarningChannel = NotificationChannel(
+            "weatherWarning",
+            "天気の通知",
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+
+        swimmingDetailChannel = NotificationChannel(
+            "swimmingDetail",
+            "泳いでいるときの通知",
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+        manager.createNotificationChannel(farWarningChannel)
+        manager.createNotificationChannel(weatherWarningChannel)
+        manager.createNotificationChannel(swimmingDetailChannel)
 
         requestPermissions()
     }
 
     private fun setupClasses() {
-        // USB接続初期化
-        usbSerialManager = UsbSerialManager(context, this)
-        usbSerialManager.registerReceiver()
-        usbSerialManager.connect()
-
-        // Bluetooth接続初期化（探索と電波強度ソート開始）
-        bluetoothGpsManager = BluetoothGpsManager(context, this)
-        bluetoothGpsManager.startDiscovery(autoConnect = true)
-        Log.d(TAG, "Bluetooth discovery and auto connect initiated")
+        // GpsConnectionService をフォアグラウンドサービスとして起動してバインド
+        val serviceIntent = Intent(context, GpsConnectionService::class.java)
+        ContextCompat.startForegroundService(context, serviceIntent)
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        Log.d(TAG, "GpsConnectionService start and bind initiated")
     }
 
     private fun setupWindowInsets() {
@@ -288,9 +336,7 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
         super.onNewIntent(intent)
         setIntent(intent)
         if (UsbManager.ACTION_USB_DEVICE_ATTACHED == intent.action) {
-            if (::usbSerialManager.isInitialized) {
-                usbSerialManager.connect()
-            }
+            gpsService?.connectUsb()
         }
     }
 
@@ -355,6 +401,18 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
                             else -> Color.RED
                         }
                         (overlayDrawable.mutate() as? GradientDrawable)?.setStroke(STROKE_WIDTH, color)
+                        if(distance > 30 && !isSwimming(context, detail.location.latitude, detail.location.longitude)){
+                            if(!::spawnedFarWarningNotification.isInitialized){
+                            spawnedFarWarningNotification = sendNotification(
+                                context,
+                                "farWarning",
+                                "岸から30m以上離れています",
+                                "安全のため岸に戻るか、ライフジャケットを着用してください",
+                                true,
+                                1000
+                            )!!
+                                }
+                        }
                     }
                 }
             }
@@ -477,7 +535,7 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
                 .setTitle(getString(R.string.select_bluetooth_device))
                 .setMessage(getString(R.string.no_device_found))
                 .setPositiveButton(getString(R.string.rescan)) { _, _ ->
-                    bluetoothGpsManager.startDiscovery(autoConnect = false)
+                    gpsService?.startBluetoothDiscovery(autoConnect = false)
                 }
                 .setNegativeButton(getString(R.string.cancel), null)
                 .create()
@@ -504,10 +562,10 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
             .setItems(itemLabels) { _, which ->
                 val selected = devices[which]
                 Log.d(TAG, "User selected Bluetooth device: ${selected.name} (${selected.address})")
-                bluetoothGpsManager.connect(selected.device)
+                gpsService?.connectBluetooth(selected.device)
             }
             .setPositiveButton(getString(R.string.rescan)) { _, _ ->
-                bluetoothGpsManager.startDiscovery(autoConnect = false)
+                gpsService?.startBluetoothDiscovery(autoConnect = false)
             }
             .setNegativeButton(getString(R.string.cancel), null)
             .create()
@@ -525,9 +583,9 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
      * 手動でBluetoothデバイス選択ダイアログを開き、最新の一覧表示とスキャンを行います。
      */
     private fun showManualDeviceSelectionDialog() {
-        val currentDevices = bluetoothGpsManager.getSortedDiscoveredDevices()
+        val currentDevices = gpsService?.getSortedDiscoveredDevices() ?: emptyList()
         showDeviceSelectionDialog(currentDevices)
-        bluetoothGpsManager.startDiscovery(autoConnect = false)
+        gpsService?.startBluetoothDiscovery(autoConnect = false)
     }
 
     /**
@@ -645,12 +703,11 @@ class MainActivity : AppCompatActivity(), UsbSerialListener, BluetoothGpsListene
         super.onDestroy()
         selectionDialog?.dismiss()
         selectionDialog = null
-        if (::usbSerialManager.isInitialized) {
-            usbSerialManager.unregisterReceiver()
-            usbSerialManager.disconnect()
-        }
-        if (::bluetoothGpsManager.isInitialized) {
-            bluetoothGpsManager.release()
+        // サービスのバインドを解除（サービス自体はバックグラウンドで通信を継続）
+        if (serviceBound) {
+            gpsService?.setServiceListener(null)
+            unbindService(serviceConnection)
+            serviceBound = false
         }
         mapManager.onDestroy()
     }

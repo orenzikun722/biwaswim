@@ -23,4 +23,11 @@
     <string name="status_warning_malformed">%1$s (Data Error)</string>
     <string name="status_warning_no_fix">%1$s (No Fix)</string>
     <string name="attribution_gsi">© GSI of Japan</string>
+    <string name="service_notification_title">GPS接続サービス実行中</string>
+    <string name="service_notification_text_disconnected">デバイス未接続</string>
+    <string name="service_notification_text_connecting">接続中...</string>
+    <string name="service_notification_text_usb_connected">USB接続済み</string>
+    <string name="service_notification_text_bt_connected">Bluetooth接続済み: %1$s</string>
+    <string name="service_notification_text_both_connected">USB &amp; Bluetooth接続済み</string>
+    <string name="service_channel_name">GPS接続サービス</string>
 </resources>
