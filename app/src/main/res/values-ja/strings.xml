@@ -24,4 +24,16 @@
     <string name="status_warning_malformed">%1$s (データ異常)</string>
     <string name="status_warning_no_fix">%1$s (測位中)</string>
     <string name="attribution_gsi">© 国土地理院</string>
+    <string name="service_notification_title">GPS接続サービス実行中</string>
+    <string name="service_notification_text_disconnected">デバイス未接続</string>
+    <string name="service_notification_text_connecting">接続中...</string>
+    <string name="service_notification_text_usb_connected">USB接続済み</string>
+    <string name="service_notification_text_bt_connected">Bluetooth接続済み: %1$s</string>
+    <string name="service_notification_text_both_connected">USB &amp; Bluetooth接続済み</string>
+    <string name="service_channel_name">GPS接続サービス</string>
+    <string name="swim_notification_title">🏊 遊泳中</string>
+    <string name="swim_notification_text">時間: %1$s | 距離: %2$s</string>
+    <string name="swim_stats_display">時間: %1$s  距離: %2$s</string>
+    <string name="swim_finished_title">🏊 遊泳終了</string>
+    <string name="swim_finished_text">総時間: %1$s | 総距離: %2$s</string>
 </resources>

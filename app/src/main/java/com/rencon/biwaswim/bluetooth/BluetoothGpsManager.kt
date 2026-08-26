@@ -121,7 +121,11 @@ class BluetoothGpsManager(
                             name.contains("GNSS", ignoreCase = true) ||
                             name.contains("GPS", ignoreCase = true)
                 }.thenBy { it.name ?: "" }
-            )
+            ).filter { device ->
+                device.name.contains("QZ1", ignoreCase = true) ||
+                        device.name.contains("GNSS", ignoreCase = true) ||
+                        device.name.contains("GPS", ignoreCase = true)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting paired devices: ${e.message}")
             emptyList()
@@ -137,7 +141,11 @@ class BluetoothGpsManager(
             compareByDescending<DiscoveredBluetoothDevice> { it.isQz1OrGnss }
                 .thenByDescending { it.rssi }
                 .thenBy { it.name }
-        )
+        ).filter { device ->
+            device.name.contains("QZ1", ignoreCase = true) ||
+                    device.name.contains("GNSS", ignoreCase = true) ||
+                    device.name.contains("GPS", ignoreCase = true)
+        }
     }
 
     /**

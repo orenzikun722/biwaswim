@@ -35,18 +35,19 @@ import com.rencon.biwaswim.map.MapManager
 import com.rencon.biwaswim.nmea.GpsLocation
 import com.rencon.biwaswim.nmea.NmeaParseDetail
 import com.rencon.biwaswim.nmea.NmeaParser
+import com.rencon.biwaswim.nmea.calculateDistance
+import com.rencon.biwaswim.nmea.calculateDistanceBetween
+import com.rencon.biwaswim.nmea.isSwimming
+import com.rencon.biwaswim.notification.sendNotification
 import com.rencon.biwaswim.permission.checkPermission
 import com.rencon.biwaswim.service.GpsConnectionService
-import com.rencon.biwaswim.usb.UsbSerialListener
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
-import com.rencon.biwaswim.nmea.calculateDistance
-import com.rencon.biwaswim.nmea.isSwimming
-import com.rencon.biwaswim.notification.sendNotification
 import org.maplibre.android.maps.MapView
+import java.util.Locale
 
 class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
@@ -56,7 +57,10 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         private const val DATA_TIMEOUT_MS = 4000L
         private const val ERROR_HOLD_MS = 3000L
 
+        private const val SWIM_NOTIFICATION_ID = 2000
+        private const val OUT_OF_WATER_TOLERANCE = 3
     }
+
     private class ConnectionHealth {
         var isConnected: Boolean = false
         var connectedAt: Long = 0L
@@ -109,6 +113,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private var connectedBluetoothDeviceName: String? = null
     private var healthMonitorJob: Job? = null
     private lateinit var distanceFromShore: TextView
+    private lateinit var swimStats: TextView
     private lateinit var mapView: MapView
     private lateinit var mainView: View
     private lateinit var overlayDrawable: Drawable
@@ -117,6 +122,15 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private lateinit var weatherWarningChannel: NotificationChannel
     private lateinit var swimmingDetailChannel: NotificationChannel
     private lateinit var spawnedFarWarningNotification: Notification
+
+    // --- 遊泳トラッキング状態 ---
+    private var isSwimmingActive: Boolean = false
+    private var swimStartTimeMs: Long = 0L
+    private var swimTotalDistanceMeters: Double = 0.0
+    private var lastSwimLat: Double? = null
+    private var lastSwimLon: Double? = null
+    private var swimTimerJob: Job? = null
+    private var outOfWaterCounter: Int = 0
 
     // --- GpsConnectionService バインド ---
     private var gpsService: GpsConnectionService? = null
@@ -232,6 +246,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             }
         }
     }
+
     private fun requestPermissions() {
         val permissions = buildList {
             if (!checkPermission.checkBluetoothPermission(context)) {
@@ -253,6 +268,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         context = this
@@ -274,7 +290,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 showManualDeviceSelectionDialog()
             }
         }
-        distanceFromShore = findViewById<TextView>(R.id.distanceFromShore)
+        distanceFromShore = findViewById(R.id.distanceFromShore)
+        swimStats = findViewById(R.id.swimStats)
 
         overlayDrawable = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -376,6 +393,131 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         return HealthStatus.NO_FIX
     }
 
+    // --- 遊泳トラッキングロジック ---
+
+    private fun formatElapsedTime(elapsedSeconds: Long): String {
+        val hours = elapsedSeconds / 3600
+        val minutes = (elapsedSeconds % 3600) / 60
+        val seconds = elapsedSeconds % 60
+        return if (hours > 0) {
+            String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+        }
+    }
+
+    private fun formatDistance(meters: Double): String {
+        return if (meters >= 1000.0) {
+            String.format(Locale.getDefault(), "%.2f km", meters / 1000.0)
+        } else {
+            String.format(Locale.getDefault(), "%d m", meters.toInt())
+        }
+    }
+
+    private fun startSwimSession(startLat: Double, startLon: Double) {
+        isSwimmingActive = true
+        swimStartTimeMs = System.currentTimeMillis()
+        swimTotalDistanceMeters = 0.0
+        lastSwimLat = startLat
+        lastSwimLon = startLon
+        outOfWaterCounter = 0
+
+        mapManager.clearTrack()
+        mapManager.addTrackPoint(startLat, startLon)
+
+        startSwimTimer()
+        updateSwimNotificationAndUI()
+    }
+
+    private fun updateSwimProgress(lat: Double, lon: Double) {
+        outOfWaterCounter = 0
+        val prevLat = lastSwimLat
+        val prevLon = lastSwimLon
+        if (prevLat != null && prevLon != null) {
+            val dist = calculateDistanceBetween(prevLat, prevLon, lat, lon)
+            // 0.5m 〜 50m の妥当な移動（静止時のGPSジッターやテレポートを除外）を加算
+            if (dist in 0.5f..50.0f) {
+                swimTotalDistanceMeters += dist
+                lastSwimLat = lat
+                lastSwimLon = lon
+                mapManager.addTrackPoint(lat, lon)
+            }
+        } else {
+            lastSwimLat = lat
+            lastSwimLon = lon
+            mapManager.addTrackPoint(lat, lon)
+        }
+        updateSwimNotificationAndUI()
+    }
+
+    private fun checkSwimExit() {
+        outOfWaterCounter++
+        if (outOfWaterCounter >= OUT_OF_WATER_TOLERANCE) {
+            finishSwimSession()
+        }
+    }
+
+    private fun finishSwimSession() {
+        if (!isSwimmingActive) return
+        isSwimmingActive = false
+        swimTimerJob?.cancel()
+        swimTimerJob = null
+
+        val elapsedSec = (System.currentTimeMillis() - swimStartTimeMs) / 1000
+        val timeStr = formatElapsedTime(elapsedSec)
+        val distStr = formatDistance(swimTotalDistanceMeters)
+        val notifMessage = getString(R.string.swim_finished_text, timeStr, distStr)
+
+        sendNotification(
+            context = context,
+            channelid = "swimmingDetail",
+            title = getString(R.string.swim_finished_title),
+            message = notifMessage,
+            isOnGoing = false,
+            notifyId = SWIM_NOTIFICATION_ID
+        )
+
+        runOnUiThread {
+            if (::swimStats.isInitialized) {
+                swimStats.text = "${getString(R.string.swim_finished_title)}: $timeStr / $distStr"
+            }
+        }
+    }
+
+    private fun startSwimTimer() {
+        swimTimerJob?.cancel()
+        swimTimerJob = lifecycleScope.launch {
+            while (isActive && isSwimmingActive) {
+                updateSwimNotificationAndUI()
+                delay(1000L)
+            }
+        }
+    }
+
+    private fun updateSwimNotificationAndUI() {
+        if (!isSwimmingActive) return
+        val elapsedSec = (System.currentTimeMillis() - swimStartTimeMs) / 1000
+        val timeStr = formatElapsedTime(elapsedSec)
+        val distStr = formatDistance(swimTotalDistanceMeters)
+        val notifMessage = getString(R.string.swim_notification_text, timeStr, distStr)
+
+        sendNotification(
+            context = context,
+            channelid = "swimmingDetail",
+            title = getString(R.string.swim_notification_title),
+            message = notifMessage,
+            isOnGoing = true,
+            notifyId = SWIM_NOTIFICATION_ID
+        )
+
+        runOnUiThread {
+            if (::swimStats.isInitialized) {
+                swimStats.text = getString(R.string.swim_stats_display, timeStr, distStr)
+                swimStats.visibility = View.VISIBLE
+            }
+        }
+    }
+
     private fun handleNmeaDetail(detail: NmeaParseDetail, isUsb: Boolean) {
         val health = if (isUsb) usbHealth else btHealth
         val now = System.currentTimeMillis()
@@ -384,34 +526,54 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         when (detail) {
             is NmeaParseDetail.LocationUpdate -> {
                 health.lastValidLocationTime = now
+                val lat = detail.location.latitude
+                val lon = detail.location.longitude
 
-                val distance = calculateDistance(context, detail.location.latitude, detail.location.longitude)
+                val distance = calculateDistance(context, lat, lon)
+                val inWater = isSwimming(context, lat, lon)
+
                 runOnUiThread {
+                    // 遊泳トラッキングの判定・更新（UIスレッドで安全に実行）
+                    if (inWater) {
+                        if (!isSwimmingActive) {
+                            startSwimSession(lat, lon)
+                        } else {
+                            updateSwimProgress(lat, lon)
+                        }
+                    } else {
+                        if (isSwimmingActive) {
+                            checkSwimExit()
+                        }
+                    }
+
                     mapManager.updateLocation(
-                        latitude = detail.location.latitude,
-                        longitude = detail.location.longitude
+                        latitude = lat,
+                        longitude = lon
                     )
-                    if(::distanceFromShore.isInitialized){
+                    if (::distanceFromShore.isInitialized) {
                         val distancestr = distance.toInt().toString()
                         distanceFromShore.text = distancestr + "m"
                         distanceFromShore.visibility = View.VISIBLE
-                        val color = when {
-                            distance < 20f -> Color.GREEN
-                            distance < 30f -> Color.rgb(255, 165, 0) // オレンジ
-                            else -> Color.RED
+                        var color = Color.rgb(0, 75, 175)
+                        if(inWater) {
+                            color = when {
+                                distance < 20f -> Color.GREEN
+                                distance < 30f -> Color.rgb(255, 165, 0) // オレンジ
+                                else -> Color.RED
+                            }
                         }
                         (overlayDrawable.mutate() as? GradientDrawable)?.setStroke(STROKE_WIDTH, color)
-                        if(distance > 30 && !isSwimming(context, detail.location.latitude, detail.location.longitude)){
-                            if(!::spawnedFarWarningNotification.isInitialized){
-                            spawnedFarWarningNotification = sendNotification(
-                                context,
-                                "farWarning",
-                                "岸から30m以上離れています",
-                                "安全のため岸に戻るか、ライフジャケットを着用してください",
-                                true,
-                                1000
-                            )!!
-                                }
+                        if (distance > 30 && inWater) {
+                            if (!::spawnedFarWarningNotification.isInitialized) {
+                                spawnedFarWarningNotification = sendNotification(
+                                    context,
+                                    "farWarning",
+                                    "岸から30m以上離れています",
+                                    "安全のため岸に戻るか、ライフジャケットを着用してください",
+                                    true,
+                                    1000
+                                )!!
+                            }
                         }
                     }
                 }
@@ -506,7 +668,6 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
     override fun onNmeaParseDetail(detail: NmeaParseDetail) {
         handleNmeaDetail(detail, isUsb = false)
-
         updateOverallConnectionStatus()
     }
 
@@ -703,6 +864,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         super.onDestroy()
         selectionDialog?.dismiss()
         selectionDialog = null
+        swimTimerJob?.cancel()
+        swimTimerJob = null
         // サービスのバインドを解除（サービス自体はバックグラウンドで通信を継続）
         if (serviceBound) {
             gpsService?.setServiceListener(null)

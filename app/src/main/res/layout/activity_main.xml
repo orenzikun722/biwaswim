@@ -14,6 +14,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         />
+
     <TextView
         android:id="@+id/connectionStatus"
         android:layout_width="wrap_content"
@@ -25,8 +26,9 @@
         android:background="@color/disconnected"
         android:textColor="@color/black"
         android:padding="5dp"
-        android:textSize="30sp"
+        android:textSize="24sp"
         android:text="@string/disconnected"/>
+
     <TextView
         android:id="@+id/distanceFromShore"
         android:layout_width="wrap_content"
@@ -35,12 +37,29 @@
         app:layout_constraintStart_toStartOf="parent"
         android:layout_marginTop="30dp"
         android:layout_marginStart="10dp"
-        android:textSize="30sp"
+        android:textSize="26sp"
         android:textColor="@color/white"
         android:text=""
         android:visibility="invisible"
         android:background="@color/distance_from_shore_bg"
         android:padding="5dp"/>
+
+    <TextView
+        android:id="@+id/swimStats"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@id/distanceFromShore"
+        app:layout_constraintStart_toStartOf="parent"
+        android:layout_marginTop="10dp"
+        android:layout_marginStart="10dp"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="@color/white"
+        android:text=""
+        android:visibility="gone"
+        android:background="#D9002B66"
+        android:padding="6dp"/>
+
     <TextView
         android:id="@+id/attribution"
         android:layout_width="wrap_content"
