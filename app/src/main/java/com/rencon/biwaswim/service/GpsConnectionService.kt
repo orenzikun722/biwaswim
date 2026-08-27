@@ -1,22 +1,28 @@
-﻿package com.rencon.biwaswim.service
+package com.rencon.biwaswim.service
 
 import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import com.rencon.biwaswim.MainActivity
 import com.rencon.biwaswim.R
 import com.rencon.biwaswim.bluetooth.BluetoothGpsListener
 import com.rencon.biwaswim.bluetooth.BluetoothGpsManager
 import com.rencon.biwaswim.bluetooth.DiscoveredBluetoothDevice
 import com.rencon.biwaswim.nmea.GpsLocation
 import com.rencon.biwaswim.nmea.NmeaParseDetail
-import com.rencon.biwaswim.notification.buildForegroundNotification
 import com.rencon.biwaswim.usb.UsbSerialListener
 import com.rencon.biwaswim.usb.UsbSerialManager
 
@@ -71,18 +77,17 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
     var isBtConnected: Boolean = false
         private set
 
+    // --- 遊泳トラッキング状態 ---
+    private var isSwimmingActive: Boolean = false
+    private var swimElapsedText: String? = null
+    private var swimDistanceText: String? = null
+
     // --- ライフサイクル ---
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        val notification = buildForegroundNotification(
-            this,
-            CHANNEL_ID_SERVICE,
-            getString(R.string.service_notification_title),
-            getString(R.string.service_notification_text_disconnected)
-        )
-        startForeground(FOREGROUND_NOTIFICATION_ID, notification)
+        startForegroundServiceWithNotification()
 
         usbSerialManager = UsbSerialManager(this, this)
         usbSerialManager.registerReceiver()
@@ -95,6 +100,7 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        updateForegroundNotification()
         return START_STICKY
     }
 
@@ -115,15 +121,16 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
             NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = getString(R.string.service_notification_title)
+            setShowBadge(false)
         }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(channel)
     }
 
-    // --- 通知更新 ---
+    // --- 通知生成と更新 ---
 
-    private fun updateForegroundNotification() {
-        val text = when {
+    private fun getConnectionStatusText(): String {
+        return when {
             isUsbConnected && isBtConnected ->
                 getString(R.string.service_notification_text_both_connected)
             isUsbConnected ->
@@ -136,17 +143,93 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
             else ->
                 getString(R.string.service_notification_text_disconnected)
         }
-        val notification = buildForegroundNotification(
+    }
+
+    private fun createForegroundNotification(): Notification {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
             this,
-            CHANNEL_ID_SERVICE,
-            getString(R.string.service_notification_title),
-            text
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(FOREGROUND_NOTIFICATION_ID, notification)
+
+        val title: String
+        val contentText: String
+        val subText: String?
+
+        if (isSwimmingActive && swimElapsedText != null && swimDistanceText != null) {
+            title = getString(R.string.swim_notification_title)
+            contentText = getString(R.string.swim_notification_text, swimElapsedText, swimDistanceText)
+            subText = getConnectionStatusText()
+        } else {
+            title = getString(R.string.service_notification_title)
+            contentText = getConnectionStatusText()
+            subText = null
+        }
+
+        return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
+            .setSmallIcon(R.drawable.baseline_fmd_good_24)
+            .setContentTitle(title)
+            .setContentText(contentText)
+            .apply {
+                if (subText != null) {
+                    setSubText(subText)
+                }
+            }
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+
+    private fun startForegroundServiceWithNotification() {
+        val notification = createForegroundNotification()
+        val foregroundServiceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        } else {
+            0
+        }
+        ServiceCompat.startForeground(
+            this,
+            FOREGROUND_NOTIFICATION_ID,
+            notification,
+            foregroundServiceType
+        )
+    }
+
+    private fun updateForegroundNotification() {
+        val notification = createForegroundNotification()
+        val foregroundServiceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        } else {
+            0
+        }
+        ServiceCompat.startForeground(
+            this,
+            FOREGROUND_NOTIFICATION_ID,
+            notification,
+            foregroundServiceType
+        )
     }
 
     // --- 公開メソッド（MainActivity から呼び出す） ---
+
+    /**
+     * 遊泳トラッキング情報をフォアグラウンドサービス通知に紐づけて更新します。
+     */
+    fun updateSwimStatus(isSwimming: Boolean, elapsedTimeStr: String? = null, distanceStr: String? = null) {
+        this.isSwimmingActive = isSwimming
+        this.swimElapsedText = elapsedTimeStr
+        this.swimDistanceText = distanceStr
+        updateForegroundNotification()
+    }
 
     fun getSortedDiscoveredDevices(): List<DiscoveredBluetoothDevice> =
         bluetoothGpsManager.getSortedDiscoveredDevices()

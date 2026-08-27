@@ -40,14 +40,27 @@ private var counter = 0
  * フォアグラウンドサービス用の通知を構築して返します（notify は呼びません）。
  * startForeground() に直接渡してください。
  */
-fun buildForegroundNotification(context: Context, channelId: String, title: String, message: String): Notification {
+fun buildForegroundNotification(
+    context: Context,
+    channelId: String,
+    title: String,
+    message: String,
+    contentIntent: android.app.PendingIntent? = null
+): Notification {
     return NotificationCompat.Builder(context, channelId)
-        .setSmallIcon(com.rencon.biwaswim.R.drawable.warning)
+        .setSmallIcon(com.rencon.biwaswim.R.drawable.baseline_fmd_good_24)
         .setContentTitle(title)
         .setContentText(message)
         .setPriority(NotificationCompat.PRIORITY_LOW)
+        .setCategory(NotificationCompat.CATEGORY_SERVICE)
         .setOngoing(true)
+        .setAutoCancel(false)
         .setOnlyAlertOnce(true)
         .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        .apply {
+            if (contentIntent != null) {
+                setContentIntent(contentIntent)
+            }
+        }
         .build()
 }

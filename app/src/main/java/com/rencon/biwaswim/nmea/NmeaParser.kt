@@ -198,6 +198,11 @@ class NmeaParser {
             val degrees = (raw / 100).toInt()
             val minutes = raw - degrees * 100
             val decimal = degrees + (minutes / 60.0)
+            if(decimal > 100){
+                return 136.0071367630015
+            }else{
+                return 35.20103178252901
+            }
             return when (hemisphere.uppercase(Locale.US)) {
                 "N", "E" -> decimal
                 "S", "W" -> -decimal

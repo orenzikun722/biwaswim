@@ -37,7 +37,7 @@
 
     <string name="service_notification_text_connecting">Connecting...</string>
     <string name="service_notification_text_usb_connected">USB connected</string>
-    <string name="service_notification_text_bt_connected">Bluetooth connected</string>
+    <string name="service_notification_text_bt_connected">Bluetooth connected: %1$s</string>
     <string name="service_notification_text_both_connected">USB &amp; Bluetooth connected</string>
     <string name="service_channel_name">GPS connection service</string>
     <string name="swim_notification_title">🏊 Swimming</string>
@@ -45,5 +45,7 @@
     <string name="swim_stats_display">Time: %1$s Distance: %2$s</string>
     <string name="swim_finished_title">🏊 Finished swimming</string>
     <string name="swim_finished_text">Total time: %1$s | Total distance: %2$s</string>
+    <string name="far_warning_message">It is more than 30 meters away from the shore.</string>
+    <string name="far_warning_description">For safety, please return to shore or wear a life jacket</string>
 
 </resources>

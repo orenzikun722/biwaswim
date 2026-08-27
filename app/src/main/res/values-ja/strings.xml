@@ -36,4 +36,6 @@
     <string name="swim_stats_display">時間: %1$s  距離: %2$s</string>
     <string name="swim_finished_title">🏊 遊泳終了</string>
     <string name="swim_finished_text">総時間: %1$s | 総距離: %2$s</string>
+    <string name="far_warning_message">岸から30m以上離れています</string>
+    <string name="far_warning_description">安全のため岸に戻るか、ライフジャケットを着用してください</string>
 </resources>

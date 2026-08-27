@@ -41,6 +41,7 @@ import com.rencon.biwaswim.nmea.isSwimming
 import com.rencon.biwaswim.notification.sendNotification
 import com.rencon.biwaswim.permission.checkPermission
 import com.rencon.biwaswim.service.GpsConnectionService
+import com.rencon.biwaswim.vibration.VibrationHelper
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -59,6 +60,10 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
         private const val SWIM_NOTIFICATION_ID = 2000
         private const val OUT_OF_WATER_TOLERANCE = 3
+
+        private const val FAR_WARNING_NOTIFICATION_ID = 1000
+        private const val FAR_WARNING_INTERVAL_MS = 20_000L
+        private const val FAR_SHORE_THRESHOLD_METERS = 30.0
     }
 
     private class ConnectionHealth {
@@ -121,7 +126,9 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private lateinit var farWarningChannel: NotificationChannel
     private lateinit var weatherWarningChannel: NotificationChannel
     private lateinit var swimmingDetailChannel: NotificationChannel
-    private lateinit var spawnedFarWarningNotification: Notification
+    private lateinit var vibrationHelper: VibrationHelper
+    private var isFarWarningActive: Boolean = false
+    private var farWarningJob: Job? = null
 
     // --- 遊泳トラッキング状態 ---
     private var isSwimmingActive: Boolean = false
@@ -304,12 +311,16 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             mapView.overlay.clear()
             mapView.overlay.add(overlayDrawable)
         }
+        vibrationHelper = VibrationHelper(this)
         val manager = getSystemService(NotificationManager::class.java)
         farWarningChannel = NotificationChannel(
             "farWarning",
             "岸から離れすぎたときの通知",
             NotificationManager.IMPORTANCE_HIGH
-        )
+        ).apply {
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 500, 150, 500, 150, 800)
+        }
 
         weatherWarningChannel = NotificationChannel(
             "weatherWarning",
@@ -460,14 +471,19 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private fun finishSwimSession() {
         if (!isSwimmingActive) return
         isSwimmingActive = false
+        stopFarShoreWarning()
         swimTimerJob?.cancel()
         swimTimerJob = null
+
+        // フォアグラウンドサービスの通知を通常の接続ステータスに戻す
+        gpsService?.updateSwimStatus(false)
 
         val elapsedSec = (System.currentTimeMillis() - swimStartTimeMs) / 1000
         val timeStr = formatElapsedTime(elapsedSec)
         val distStr = formatDistance(swimTotalDistanceMeters)
         val notifMessage = getString(R.string.swim_finished_text, timeStr, distStr)
 
+        // 遊泳完了通知（消去可能通知）
         sendNotification(
             context = context,
             channelid = "swimmingDetail",
@@ -499,16 +515,21 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         val elapsedSec = (System.currentTimeMillis() - swimStartTimeMs) / 1000
         val timeStr = formatElapsedTime(elapsedSec)
         val distStr = formatDistance(swimTotalDistanceMeters)
-        val notifMessage = getString(R.string.swim_notification_text, timeStr, distStr)
 
-        sendNotification(
-            context = context,
-            channelid = "swimmingDetail",
-            title = getString(R.string.swim_notification_title),
-            message = notifMessage,
-            isOnGoing = true,
-            notifyId = SWIM_NOTIFICATION_ID
-        )
+        // フォアグラウンドサービス（Ongoing通知）に遊泳ステータスを紐づけて反映
+        if (gpsService != null) {
+            gpsService?.updateSwimStatus(true, timeStr, distStr)
+        } else {
+            val notifMessage = getString(R.string.swim_notification_text, timeStr, distStr)
+            sendNotification(
+                context = context,
+                channelid = "swimmingDetail",
+                title = getString(R.string.swim_notification_title),
+                message = notifMessage,
+                isOnGoing = true,
+                notifyId = SWIM_NOTIFICATION_ID
+            )
+        }
 
         runOnUiThread {
             if (::swimStats.isInitialized) {
@@ -555,25 +576,20 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         distanceFromShore.text = distancestr + "m"
                         distanceFromShore.visibility = View.VISIBLE
                         var color = Color.rgb(0, 75, 175)
-                        if(inWater) {
+                        if (inWater) {
                             color = when {
-                                distance < 20f -> Color.GREEN
-                                distance < 30f -> Color.rgb(255, 165, 0) // オレンジ
+                                distance < 20.0 -> Color.GREEN
+                                distance < FAR_SHORE_THRESHOLD_METERS -> Color.rgb(255, 165, 0) // オレンジ
                                 else -> Color.RED
                             }
                         }
                         (overlayDrawable.mutate() as? GradientDrawable)?.setStroke(STROKE_WIDTH, color)
-                        if (distance > 30 && inWater) {
-                            if (!::spawnedFarWarningNotification.isInitialized) {
-                                spawnedFarWarningNotification = sendNotification(
-                                    context,
-                                    "farWarning",
-                                    "岸から30m以上離れています",
-                                    "安全のため岸に戻るか、ライフジャケットを着用してください",
-                                    true,
-                                    1000
-                                )!!
-                            }
+
+                        // 岸から30m離れたときの警告（通知＋20秒周期のはっきりとした振動）
+                        if (inWater && distance >= FAR_SHORE_THRESHOLD_METERS) {
+                            startFarShoreWarning()
+                        } else {
+                            stopFarShoreWarning()
                         }
                     }
                 }
@@ -814,6 +830,43 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         }
     }
 
+    /**
+     * 岸から30m以上離れた際の警告（通知および20秒ごとの明確な振動）を開始します。
+     */
+    private fun startFarShoreWarning() {
+        if (isFarWarningActive) return
+        isFarWarningActive = true
+        farWarningJob?.cancel()
+        farWarningJob = lifecycleScope.launch {
+            while (isActive && isFarWarningActive) {
+                sendNotification(
+                    context = context,
+                    channelid = "farWarning",
+                    title = getString(R.string.far_warning_message),
+                    message = getString(R.string.far_warning_description),
+                    isOnGoing = true,
+                    notifyId = FAR_WARNING_NOTIFICATION_ID
+                )
+                vibrationHelper.vibrateDistinctWarning()
+                delay(FAR_WARNING_INTERVAL_MS)
+            }
+        }
+    }
+
+    /**
+     * 岸から30m以内に戻った場合や遊泳終了時に警告を停止し、通知を消去します。
+     */
+    private fun stopFarShoreWarning() {
+        if (!isFarWarningActive && farWarningJob == null) return
+        isFarWarningActive = false
+        farWarningJob?.cancel()
+        farWarningJob = null
+        vibrationHelper.cancel()
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(FAR_WARNING_NOTIFICATION_ID)
+    }
+
     // --- ライフサイクル委譲 ---
 
     override fun onStart() {
@@ -862,6 +915,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopFarShoreWarning()
         selectionDialog?.dismiss()
         selectionDialog = null
         swimTimerJob?.cancel()
