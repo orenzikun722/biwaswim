@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.view.Gravity
 import com.rencon.biwaswim.R
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -151,6 +153,9 @@ class MapManager(
                 .zoom(DEFAULT_ZOOM)
                 .tilt(DEFAULT_TILT)
                 .build()
+            map.uiSettings.isCompassEnabled = true
+            map.uiSettings.compassGravity = Gravity.BOTTOM or Gravity.END
+            map.uiSettings.setCompassMargins(0, 0, 30, 90)
         }
     }
 
