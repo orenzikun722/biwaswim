@@ -63,4 +63,5 @@ dependencies {
     implementation(libs.android.sdk)
     implementation(libs.jts.core)
     implementation(libs.jts.io.common)
+    implementation(libs.okhttp)
 }

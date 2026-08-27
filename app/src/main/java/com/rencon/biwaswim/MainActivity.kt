@@ -1,7 +1,6 @@
 package com.rencon.biwaswim
 
 import android.Manifest
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.bluetooth.BluetoothDevice
@@ -20,6 +19,11 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.View
+import android.widget.Button
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -29,7 +33,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
-import com.rencon.biwaswim.bluetooth.BluetoothGpsListener
 import com.rencon.biwaswim.bluetooth.DiscoveredBluetoothDevice
 import com.rencon.biwaswim.map.MapManager
 import com.rencon.biwaswim.nmea.GpsLocation
@@ -42,13 +45,18 @@ import com.rencon.biwaswim.notification.sendNotification
 import com.rencon.biwaswim.permission.checkPermission
 import com.rencon.biwaswim.service.GpsConnectionService
 import com.rencon.biwaswim.vibration.VibrationHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.maplibre.android.MapLibre
 import org.maplibre.android.maps.MapView
+import java.security.SecureRandom
 import java.util.Locale
+import androidx.core.content.edit
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.sources.Source
 
 class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
@@ -129,6 +137,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private lateinit var vibrationHelper: VibrationHelper
     private var isFarWarningActive: Boolean = false
     private var farWarningJob: Job? = null
+    private lateinit var openSettingsButton: ImageButton
 
     // --- 遊泳トラッキング状態 ---
     private var isSwimmingActive: Boolean = false
@@ -322,6 +331,11 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             vibrationPattern = longArrayOf(0, 500, 150, 500, 150, 800)
         }
 
+        openSettingsButton = findViewById<ImageButton>(R.id.openSettings)
+        openSettingsButton.setOnClickListener {
+            showSettings()
+        }
+
         weatherWarningChannel = NotificationChannel(
             "weatherWarning",
             "天気の通知",
@@ -338,6 +352,17 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         manager.createNotificationChannel(swimmingDetailChannel)
 
         requestPermissions()
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val prefs = context.getSharedPreferences("app_data", Context.MODE_PRIVATE)
+            val id = prefs.getString("app_id", null)
+            if (id == null) {
+                val generatedId = generateRandomString()
+                prefs.edit {
+                    putString("app_id", generatedId)
+                }
+            }
+        }
     }
 
     private fun setupClasses() {
@@ -402,6 +427,68 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
         // 4. データは届いているが衛星未捕捉 (No Fix)
         return HealthStatus.NO_FIX
+    }
+    private fun showSettings(){
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        layout.setPadding(16, 16, 16, 16)
+
+        val options = listOf(getString(R.string.map_default), getString(R.string.map_aerial_photograph))
+
+        var selectedButton: Button? = null
+
+        options.forEach { text ->
+            val button = Button(this).apply {
+                this.text = text
+
+                setOnClickListener {
+                    selectedButton?.setBackgroundColor(
+                        Color.LTGRAY
+                    )
+                    if (this.text == getString(R.string.map_default)) {
+                        mapManager.changeStyleToOSM()
+                        mapManager.nowMapStyleType = "OSM"
+                    }
+                    if (this.text == getString(R.string.map_aerial_photograph)) {
+                        mapManager.changeStyleToGSI()
+                        mapManager.nowMapStyleType = "GSI"
+                    }
+
+                    setBackgroundColor(
+                        Color.YELLOW
+                    )
+                    selectedButton = this
+                }
+            }
+            if (text == getString(R.string.map_default) && mapManager.nowMapStyleType == "OSM") {
+                selectedButton = button
+                button.setBackgroundColor(Color.YELLOW)
+            }else if (text == getString(R.string.map_aerial_photograph) && mapManager.nowMapStyleType == "GSI") {
+                selectedButton = button
+                button.setBackgroundColor(Color.YELLOW)
+            }else{
+                button.setBackgroundColor(Color.LTGRAY)
+            }
+            button.setTextColor(Color.BLACK)
+
+            layout.addView(
+                button,
+                LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    0.5f
+                )
+            )
+        }
+
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.settings))
+            .setView(layout)
+            .setPositiveButton(getString(R.string.close)) { _, _ ->
+            }
+            .show()
     }
 
     // --- 遊泳トラッキングロジック ---
@@ -920,11 +1007,16 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         selectionDialog = null
         swimTimerJob?.cancel()
         swimTimerJob = null
-        // サービスのバインドを解除（サービス自体はバックグラウンドで通信を継続）
+        // サービスのバインドを解除（未接続かつアプリ終了時はサービスも停止）
         if (serviceBound) {
+            if (isFinishing) {
+                gpsService?.stopServiceIfDisconnected()
+            }
             gpsService?.setServiceListener(null)
             unbindService(serviceConnection)
             serviceBound = false
+        } else if (isFinishing) {
+            stopService(Intent(this, GpsConnectionService::class.java))
         }
         mapManager.onDestroy()
     }
@@ -937,5 +1029,15 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         mapManager.onSaveInstanceState(outState)
+    }
+    fun generateRandomString(length: Int = 16): String {
+        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        val random = SecureRandom()
+
+        return buildString(length) {
+            repeat(length) {
+                append(chars[random.nextInt(chars.length)])
+            }
+        }
     }
 }

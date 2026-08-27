@@ -42,8 +42,29 @@ class MapManager(
         private const val DEFAULT_LAT = 35.25
         private const val DEFAULT_LNG = 136.1
         private const val DEFAULT_ZOOM = 10.0
-        private const val DEFAULT_TILT = 60.0
+        private const val DEFAULT_TILT = 0.0
 
+        private val OSM_SATELLITE_STYLE_JSON = """
+            {
+              "version": 8,
+              "sources": {
+                "satellite": {
+                  "type": "raster",
+                  "tiles": [
+                    "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  ],
+                  "tileSize": 256
+                }
+              },
+              "layers": [
+                {
+                  "id": "satellite",
+                  "type": "raster",
+                  "source": "satellite"
+                }
+              ]
+            }
+        """.trimIndent()
         private val GSI_SATELLITE_STYLE_JSON = """
             {
               "version": 8,
@@ -76,6 +97,7 @@ class MapManager(
             mainHandler.post(action)
         }
     }
+    var nowMapStyleType = "OSM"
 
     private var markerSource: GeoJsonSource? = null
     private var markerLayer: SymbolLayer? = null
@@ -94,7 +116,7 @@ class MapManager(
         mapView.onCreate(savedInstanceState)
 
         mapView.getMapAsync { map ->
-            val style = Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
+            val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
                 // 1. 軌跡用 Source & LineLayer の初期化
                 val initialTrackFeatureCollection = if (trackPoints.size >= 2) {
@@ -215,6 +237,20 @@ class MapManager(
             trackSource?.setGeoJson(Feature.fromGeometry(lineString))
         } else if (trackPoints.size == 1) {
             trackSource?.setGeoJson(Feature.fromGeometry(trackPoints[0]))
+        }
+    }
+    fun changeStyleToOSM(){
+        mapView.getMapAsync { map ->
+            map.setStyle(
+                Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
+            )
+        }
+    }
+    fun changeStyleToGSI(){
+        mapView.getMapAsync { map ->
+            map.setStyle(
+                Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
+            )
         }
     }
 

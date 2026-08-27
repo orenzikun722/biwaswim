@@ -50,6 +50,20 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
 
     override fun onBind(intent: Intent): IBinder = binder
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        serviceListener = null
+        return super.onUnbind(intent)
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (!isUsbConnected && !isBtConnected) {
+            Log.d(TAG, "Task removed with no active connection. Stopping GpsConnectionService.")
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
     // --- ServiceListener ---
 
     /**
@@ -106,6 +120,7 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
 
     override fun onDestroy() {
         super.onDestroy()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         usbSerialManager.unregisterReceiver()
         usbSerialManager.disconnect()
         bluetoothGpsManager.release()
@@ -244,6 +259,20 @@ class GpsConnectionService : Service(), UsbSerialListener, BluetoothGpsListener 
 
     fun connectUsb() {
         usbSerialManager.connect()
+    }
+
+    /**
+     * USBまたはBluetoothに接続されていない場合、フォアグラウンド通知を解除してサービスを停止します。
+     * @return サービス停止処理を実行した場合は true、接続中のため継続した場合は false
+     */
+    fun stopServiceIfDisconnected(): Boolean {
+        if (!isUsbConnected && !isBtConnected) {
+            Log.d(TAG, "Stopping GpsConnectionService because neither USB nor BT is connected.")
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return true
+        }
+        return false
     }
 
     // --- UsbSerialListener ---

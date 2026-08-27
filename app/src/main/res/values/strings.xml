@@ -25,16 +25,6 @@
     <string name="attribution_gsi">© GSI of Japan</string>
     <string name="service_notification_title">GPS connection service executing</string>
     <string name="service_notification_text_disconnected">Device is not connected</string>
-
-
-
-
-
-
-
-
-
-
     <string name="service_notification_text_connecting">Connecting...</string>
     <string name="service_notification_text_usb_connected">USB connected</string>
     <string name="service_notification_text_bt_connected">Bluetooth connected: %1$s</string>
@@ -47,5 +37,9 @@
     <string name="swim_finished_text">Total time: %1$s | Total distance: %2$s</string>
     <string name="far_warning_message">It is more than 30 meters away from the shore.</string>
     <string name="far_warning_description">For safety, please return to shore or wear a life jacket</string>
+    <string name="map_default">Default</string>
+    <string name="map_aerial_photograph">Aerial photograph</string>
+    <string name="settings">Settings</string>
+    <string name="close">Close</string>
 
 </resources>
