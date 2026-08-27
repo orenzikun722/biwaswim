@@ -68,7 +68,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         android:padding="4dp"
-        android:text="@string/attribution_gsi"
+        android:text="@string/attribution_osm"
         android:textSize="11sp"
         android:background="#CCFFFFFF"
         android:textColor="@color/black"/>

@@ -8,6 +8,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import android.widget.TextView
+import com.rencon.biwaswim.MainActivity
 import com.rencon.biwaswim.R
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -22,6 +24,7 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import org.w3c.dom.Text
 
 /**
  * MapLibre 地図の初期化、スタイル設定、マーカーレイヤー、泳いだ軌跡（線）レイヤーの管理、ライフサイクル委譲を行うクラス。
@@ -86,6 +89,7 @@ class MapManager(
               ]
             }
         """.trimIndent()
+        var attributionTextView: TextView? = null
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -239,19 +243,21 @@ class MapManager(
             trackSource?.setGeoJson(Feature.fromGeometry(trackPoints[0]))
         }
     }
-    fun changeStyleToOSM(){
+    fun changeStyleToOSM(context: Context){
         mapView.getMapAsync { map ->
             map.setStyle(
                 Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             )
         }
+        attributionTextView?.text = context.getString(R.string.attribution_osm)
     }
-    fun changeStyleToGSI(){
+    fun changeStyleToGSI(context: Context){
         mapView.getMapAsync { map ->
             map.setStyle(
                 Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
             )
         }
+        attributionTextView?.text = context.getString(R.string.attribution_gsi)
     }
 
     // --- ライフサイクルメソッド ---

@@ -336,6 +336,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             showSettings()
         }
 
+        MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
+
         weatherWarningChannel = NotificationChannel(
             "weatherWarning",
             "天気の通知",
@@ -447,11 +449,11 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         Color.LTGRAY
                     )
                     if (this.text == getString(R.string.map_default)) {
-                        mapManager.changeStyleToOSM()
+                        mapManager.changeStyleToOSM(context)
                         mapManager.nowMapStyleType = "OSM"
                     }
                     if (this.text == getString(R.string.map_aerial_photograph)) {
-                        mapManager.changeStyleToGSI()
+                        mapManager.changeStyleToGSI(context)
                         mapManager.nowMapStyleType = "GSI"
                     }
 
