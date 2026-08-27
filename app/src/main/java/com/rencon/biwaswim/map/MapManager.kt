@@ -145,31 +145,7 @@ class MapManager(
                 trackLayer = loadedStyle.getLayerAs(TRACK_LAYER_ID)
 
                 // 2. マーカー用 Source & SymbolLayer の初期化（LineLayerの上に描画）
-                val point = Point.fromLngLat(currentLongitude, currentLatitude)
-                val feature = Feature.fromGeometry(point)
-                val featureCollection = FeatureCollection.fromFeature(feature)
-                val source = GeoJsonSource(SOURCE_ID, featureCollection)
-
-                loadedStyle.addSource(source)
-                val bitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
-                loadedStyle.addImage(ICON_ID, bitmap)
-
-                val layer = SymbolLayer(LAYER_ID, SOURCE_ID).apply {
-                    setProperties(
-                        PropertyFactory.iconImage(ICON_ID),
-                        PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                        PropertyFactory.visibility(Property.NONE)
-                    )
-                }
-
-                loadedStyle.addLayer(layer)
-                markerSource = loadedStyle.getSourceAs(SOURCE_ID)
-                markerLayer = loadedStyle.getLayerAs(LAYER_ID)
-
-                // すでに位置が更新されていた場合、マーカーを表示
-                if (currentLatitude != 0.0 || currentLongitude != 0.0) {
-                    applyMarkerLocation(currentLatitude, currentLongitude)
-                }
+                resetMarker(loadedStyle)
 
                 onMapReady?.invoke()
             }
@@ -234,6 +210,34 @@ class MapManager(
             applyTrackUpdate()
         }
     }
+    private fun resetMarker(loadedStyle: Style) {
+
+        val point = Point.fromLngLat(currentLongitude, currentLatitude)
+        val feature = Feature.fromGeometry(point)
+        val featureCollection = FeatureCollection.fromFeature(feature)
+        val source = GeoJsonSource(SOURCE_ID, featureCollection)
+
+        loadedStyle.addSource(source)
+        val bitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
+        loadedStyle.addImage(ICON_ID, bitmap)
+
+        val layer = SymbolLayer(LAYER_ID, SOURCE_ID).apply {
+            setProperties(
+                PropertyFactory.iconImage(ICON_ID),
+                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                PropertyFactory.visibility(Property.NONE)
+            )
+        }
+
+        loadedStyle.addLayer(layer)
+        markerSource = loadedStyle.getSourceAs(SOURCE_ID)
+        markerLayer = loadedStyle.getLayerAs(LAYER_ID)
+
+        // すでに位置が更新されていた場合、マーカーを表示
+        if (currentLatitude != 0.0 || currentLongitude != 0.0) {
+            applyMarkerLocation(currentLatitude, currentLongitude)
+        }
+    }
 
     private fun applyTrackUpdate() {
         if (trackPoints.size >= 2) {
@@ -245,17 +249,21 @@ class MapManager(
     }
     fun changeStyleToOSM(context: Context){
         mapView.getMapAsync { map ->
-            map.setStyle(
-                Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
-            )
+            val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
+            map.setStyle(style)
+            map.getStyle { loadedStyle ->
+                resetMarker(loadedStyle)
+            }
         }
         attributionTextView?.text = context.getString(R.string.attribution_osm)
     }
     fun changeStyleToGSI(context: Context){
         mapView.getMapAsync { map ->
-            map.setStyle(
-                Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
-            )
+            val style = Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
+            map.setStyle(style)
+            map.getStyle { loadedStyle ->
+                resetMarker(loadedStyle)
+            }
         }
         attributionTextView?.text = context.getString(R.string.attribution_gsi)
     }
