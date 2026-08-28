@@ -22,8 +22,6 @@ import android.view.View
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -55,8 +53,8 @@ import org.maplibre.android.maps.MapView
 import java.security.SecureRandom
 import java.util.Locale
 import androidx.core.content.edit
-import org.maplibre.android.maps.Style
-import org.maplibre.android.style.sources.Source
+import androidx.core.view.isInvisible
+import com.rencon.biwaswim.party.PartyWebSocketManager
 
 class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
@@ -138,6 +136,12 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private var isFarWarningActive: Boolean = false
     private var farWarningJob: Job? = null
     private lateinit var openSettingsButton: ImageButton
+    private var isMenuOpen: Boolean = false
+    private lateinit var openMenuButton: ImageButton
+    private lateinit var sideMenuView: LinearLayout
+    private lateinit var sideMenuGroup: LinearLayout
+    private lateinit var sideMenuContainer: LinearLayout
+    private lateinit var jumpToMarkerButton: Button
 
     // --- 遊泳トラッキング状態 ---
     private var isSwimmingActive: Boolean = false
@@ -331,9 +335,26 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             vibrationPattern = longArrayOf(0, 500, 150, 500, 150, 800)
         }
 
+/*0
         openSettingsButton = findViewById<ImageButton>(R.id.openSettings)
         openSettingsButton.setOnClickListener {
-            showSettings()
+            //showSettings()
+        }
+        */
+        sideMenuGroup = findViewById(R.id.sideMenuGroup)
+        sideMenuContainer = findViewById(R.id.sideMenuContainer)
+        openMenuButton = findViewById(R.id.openSideMenu)
+
+        openMenuButton.setOnClickListener { showSideMenu() }
+
+        sideMenuGroup.post {
+            sideMenuGroup.translationX = -sideMenuContainer.width.toFloat() -30f
+        }
+
+        jumpToMarkerButton = findViewById(R.id.jumpToMarker)
+        jumpToMarkerButton.setOnClickListener {
+            showSideMenu()
+            mapManager.jumpToMarker()
         }
 
         MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
@@ -357,12 +378,16 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
         lifecycleScope.launch(Dispatchers.IO) {
             val prefs = context.getSharedPreferences("app_data", Context.MODE_PRIVATE)
-            val id = prefs.getString("app_id", null)
+            var id = prefs.getString("app_id", null)
             if (id == null) {
                 val generatedId = generateRandomString()
                 prefs.edit {
                     putString("app_id", generatedId)
                 }
+                id = generatedId
+            }
+            PartyWebSocketManager().apply {
+                APP_ID = id
             }
         }
     }
@@ -491,6 +516,25 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             .setPositiveButton(getString(R.string.close)) { _, _ ->
             }
             .show()
+    }
+    private fun showSideMenu() {
+        val targetX = if (!isMenuOpen) {
+            0f
+        } else {
+            -sideMenuContainer.width.toFloat() - 30f
+        }
+
+        sideMenuGroup.animate()
+            .translationX(targetX)
+            .setDuration(300)
+            .start()
+
+        openMenuButton.setImageResource(
+            if (!isMenuOpen) R.drawable.outline_close_24
+            else R.drawable.outline_dehaze_24
+        )
+
+        isMenuOpen = !isMenuOpen
     }
 
     // --- 遊泳トラッキングロジック ---

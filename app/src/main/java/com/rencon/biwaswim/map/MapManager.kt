@@ -246,7 +246,9 @@ class MapManager(
         val layer = SymbolLayer(LAYER_ID, SOURCE_ID).apply {
             setProperties(
                 PropertyFactory.iconImage(ICON_ID),
+                PropertyFactory.iconSize(0.25f),
                 PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                PropertyFactory.iconOffset(arrayOf(0f, 100f)),
                 PropertyFactory.visibility(Property.NONE)
             )
         }
@@ -290,6 +292,19 @@ class MapManager(
             }
         }
         attributionTextView?.text = context.getString(R.string.attribution_gsi)
+    }
+    fun jumpToMarker(){
+        mapView.getMapAsync { map ->
+            if (currentLatitude != 0.0 || currentLongitude != 0.0) {
+                map.animateCamera(CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(LatLng(currentLatitude, currentLongitude))
+                        .zoom(DEFAULT_ZOOM * 1.3)
+                        .tilt(DEFAULT_TILT)
+                        .build()
+                ))
+            }
+        }
     }
 
     // --- ライフサイクルメソッド ---

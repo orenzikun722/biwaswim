@@ -42,5 +42,7 @@
     <string name="settings">Settings</string>
     <string name="close">Close</string>
     <string name="attribution_osm">©OpenStreetMap contributors</string>
+    <string name="jump_to_marker">Jump to Pin</string>
+    <string name="join_party">Join party</string>
 
 </resources>
