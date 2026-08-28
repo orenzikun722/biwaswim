@@ -24,6 +24,23 @@
         app:strokeWidth="2dp" />
 
     <Button
+        android:id="@+id/openSettings"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/white"
+        app:backgroundTint="@color/black"
+        app:strokeColor="@color/white"
+        app:strokeWidth="2dp"
+        app:cornerRadius="0dp"
+        android:padding="12dp"
+        android:layout_margin="0dp"
+        android:text="@string/open_settings"
+        android:insetLeft="0dp"
+        android:insetTop="0dp"
+        android:insetRight="0dp"
+        android:insetBottom="0dp"/>
+
+    <Button
         android:id="@+id/joinParty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

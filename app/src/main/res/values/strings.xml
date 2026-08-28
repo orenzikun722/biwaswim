@@ -44,5 +44,6 @@
     <string name="attribution_osm">©OpenStreetMap contributors</string>
     <string name="jump_to_marker">Jump to Pin</string>
     <string name="join_party">Join party</string>
+    <string name="toast_no_location">The data has not yet been received</string>
 
 </resources>

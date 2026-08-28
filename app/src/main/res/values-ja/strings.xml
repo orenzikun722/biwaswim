@@ -45,4 +45,5 @@
     <string name="attribution_osm">©OpenStreetMap contributors</string>
     <string name="jump_to_marker">ピンへ戻る</string>
     <string name="join_party">パーティーへ参加</string>
+    <string name="toast_no_location">まだデータが受信できていません</string>
 </resources>

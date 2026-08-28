@@ -54,6 +54,7 @@ import java.security.SecureRandom
 import java.util.Locale
 import androidx.core.content.edit
 import androidx.core.view.isInvisible
+import com.google.android.material.snackbar.Snackbar
 import com.rencon.biwaswim.party.PartyWebSocketManager
 
 class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
@@ -101,7 +102,6 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             lastNoFixTime = 0L
         }
     }
-
     private enum class HealthStatus {
         HEALTHY,           // 正常に測位中
         WAITING_DATA,      // 接続直後（データ待機中）
@@ -135,7 +135,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private lateinit var vibrationHelper: VibrationHelper
     private var isFarWarningActive: Boolean = false
     private var farWarningJob: Job? = null
-    private lateinit var openSettingsButton: ImageButton
+    private lateinit var openSettingsButton: Button
     private var isMenuOpen: Boolean = false
     private lateinit var openMenuButton: ImageButton
     private lateinit var sideMenuView: LinearLayout
@@ -335,12 +335,13 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             vibrationPattern = longArrayOf(0, 500, 150, 500, 150, 800)
         }
 
-/*0
-        openSettingsButton = findViewById<ImageButton>(R.id.openSettings)
+
+        openSettingsButton = findViewById<Button>(R.id.openSettings)
         openSettingsButton.setOnClickListener {
-            //showSettings()
+            showSideMenu()
+            showSettings()
         }
-        */
+
         sideMenuGroup = findViewById(R.id.sideMenuGroup)
         sideMenuContainer = findViewById(R.id.sideMenuContainer)
         openMenuButton = findViewById(R.id.openSideMenu)

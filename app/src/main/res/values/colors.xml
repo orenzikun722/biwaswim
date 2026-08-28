@@ -3,6 +3,7 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="gray">#FF888888</color>
+    <color name="snackbar_background">#FFCCFFFF</color>
     <color name="disconnected">#FFFFAAAA</color>
     <color name="connected">#FFAAFFAA</color>
     <color name="warning">#FFFFD54F</color>

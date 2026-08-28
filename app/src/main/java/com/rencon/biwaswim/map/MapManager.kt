@@ -8,7 +8,9 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.widget.TextView
+import com.google.android.material.snackbar.Snackbar
 import com.rencon.biwaswim.MainActivity
 import com.rencon.biwaswim.R
 import org.maplibre.android.camera.CameraPosition
@@ -303,10 +305,16 @@ class MapManager(
                         .tilt(DEFAULT_TILT)
                         .build()
                 ))
+            }else{
+                showToast(context.getString(R.string.toast_no_location))
             }
         }
     }
-
+    fun showToast(text: String) {
+        Snackbar.make(mapView, text, Snackbar.LENGTH_LONG)
+            .setBackgroundTint(context.getColor(R.color.snackbar_background))
+            .show()
+    }
     // --- ライフサイクルメソッド ---
 
     fun onStart() {
