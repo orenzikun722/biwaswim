@@ -12,7 +12,9 @@ import android.widget.TextView
 import com.rencon.biwaswim.MainActivity
 import com.rencon.biwaswim.R
 import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.LineLayer
@@ -24,7 +26,6 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
-import org.w3c.dom.Text
 
 /**
  * MapLibre 地図の初期化、スタイル設定、マーカーレイヤー、泳いだ軌跡（線）レイヤーの管理、ライフサイクル委譲を行うクラス。
@@ -44,7 +45,7 @@ class MapManager(
 
         private const val DEFAULT_LAT = 35.25
         private const val DEFAULT_LNG = 136.1
-        private const val DEFAULT_ZOOM = 10.0
+        private const val DEFAULT_ZOOM = 9.0
         private const val DEFAULT_TILT = 0.0
 
         private val OSM_SATELLITE_STYLE_JSON = """
@@ -103,6 +104,9 @@ class MapManager(
     }
     var nowMapStyleType = "OSM"
 
+    private var mapLibreMap: MapLibreMap? = null
+    private var isInitialCameraMoved = false
+
     private var markerSource: GeoJsonSource? = null
     private var markerLayer: SymbolLayer? = null
     private var trackSource: GeoJsonSource? = null
@@ -120,6 +124,7 @@ class MapManager(
         mapView.onCreate(savedInstanceState)
 
         mapView.getMapAsync { map ->
+            mapLibreMap = map
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
                 // 1. 軌跡用 Source & LineLayer の初期化
@@ -150,8 +155,15 @@ class MapManager(
                 onMapReady?.invoke()
             }
 
+            val initialTarget = if (currentLatitude != 0.0 || currentLongitude != 0.0) {
+                isInitialCameraMoved = true
+                LatLng(currentLatitude, currentLongitude)
+            } else {
+                LatLng(DEFAULT_LAT, DEFAULT_LNG)
+            }
+
             map.cameraPosition = CameraPosition.Builder()
-                .target(LatLng(DEFAULT_LAT, DEFAULT_LNG))
+                .target(initialTarget)
                 .zoom(DEFAULT_ZOOM)
                 .tilt(DEFAULT_TILT)
                 .build()
@@ -175,6 +187,17 @@ class MapManager(
     private fun applyMarkerLocation(latitude: Double, longitude: Double) {
         markerSource?.setGeoJson(Point.fromLngLat(longitude, latitude))
         markerLayer?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+
+        if (!isInitialCameraMoved && (latitude != 0.0 || longitude != 0.0)) {
+            isInitialCameraMoved = true
+            mapLibreMap?.animateCamera(CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(LatLng(latitude, longitude))
+                    .zoom(DEFAULT_ZOOM * 1.3)
+                    .tilt(DEFAULT_TILT)
+                    .build()
+            ))
+        }
     }
 
     /**
@@ -211,7 +234,6 @@ class MapManager(
         }
     }
     private fun resetMarker(loadedStyle: Style) {
-
         val point = Point.fromLngLat(currentLongitude, currentLatitude)
         val feature = Feature.fromGeometry(point)
         val featureCollection = FeatureCollection.fromFeature(feature)
@@ -249,6 +271,7 @@ class MapManager(
     }
     fun changeStyleToOSM(context: Context){
         mapView.getMapAsync { map ->
+            mapLibreMap = map
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style)
             map.getStyle { loadedStyle ->
@@ -259,6 +282,7 @@ class MapManager(
     }
     fun changeStyleToGSI(context: Context){
         mapView.getMapAsync { map ->
+            mapLibreMap = map
             val style = Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
             map.setStyle(style)
             map.getStyle { loadedStyle ->
