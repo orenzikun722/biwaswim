@@ -45,5 +45,26 @@
     <string name="jump_to_marker">Jump to Pin</string>
     <string name="join_party">Join party</string>
     <string name="toast_no_location">The data has not yet been received</string>
+    <string name="create_party">Create party</string>
+    <string name="invite_party">Invite to party</string>
+    <string name="scan_qrcode">Scan QR Code</string>
+    <string name="error_join_party">Failed to join the party.</string>
+    <string name="error_join_party_title">Connection Failed</string>
+    <string name="error_join_party_message">Failed to join the party: %1$s</string>
+    <string name="error_create_party_title">Party Creation Failed</string>
+    <string name="error_create_party_message">Failed to create the party: %1$s</string>
+    <string name="leave_party">Leave party</string>
+    <string name="ok">OK</string>
+    <string name="party_you_joined">You joined the party!</string>
+    <string name="party_you_left">You left the party.</string>
+    <string name="party_member_joined">%1$s joined the party.</string>
+    <string name="party_member_left">%1$s left the party.</string>
+    <string name="party_disconnected">Disconnected from the party.</string>
+    <string name="party_members_header">Party Members (%1$d):</string>
+    <string name="party_role_host">Host</string>
+    <string name="party_role_you">You</string>
+    <string name="party_role_host_you">Host, You</string>
+    <string name="invite_with_link">Invite with link</string>
+    <string name="invite_message">You have received an invitation to Biwa Swim!\n%1$s</string>
 
 </resources>

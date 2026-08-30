@@ -7,7 +7,8 @@ junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
 appcompat = "1.7.1"
-kotlinxSerializationJson = "1.11.0"
+kotlin = "2.1.0"
+kotlinxSerializationJson = "1.8.0"
 material = "1.14.0"
 activityKtx = "1.13.0"
 constraintlayout = "2.2.2"
@@ -32,4 +33,6 @@ usb-serial-for1-android = { module = "com.github.mik3y:usb-serial-for-android", 
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 

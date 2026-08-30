@@ -46,4 +46,25 @@
     <string name="jump_to_marker">ピンへ戻る</string>
     <string name="join_party">パーティーへ参加</string>
     <string name="toast_no_location">まだデータが受信できていません</string>
+    <string name="create_party">パーティーの作成</string>
+    <string name="invite_party">パーティーに招待</string>
+    <string name="scan_qrcode">QRコード読み取り</string>
+    <string name="error_join_party">パーティーへの参加に失敗しました</string>
+    <string name="error_join_party_title">接続エラー</string>
+    <string name="error_join_party_message">パーティーへの参加に失敗しました: %1$s</string>
+    <string name="error_create_party_title">パーティー作成エラー</string>
+    <string name="error_create_party_message">パーティーの作成に失敗しました: %1$s</string>
+    <string name="leave_party">パーティーを退室</string>
+    <string name="ok">OK</string>
+    <string name="party_you_joined">パーティーに参加しました</string>
+    <string name="party_you_left">パーティーを退室しました</string>
+    <string name="party_member_joined">%1$s が参加しました</string>
+    <string name="party_member_left">%1$s が退室しました</string>
+    <string name="party_disconnected">パーティー接続が切断されました</string>
+    <string name="party_members_header">パーティーメンバー (%1$d人):</string>
+    <string name="party_role_host">ホスト</string>
+    <string name="party_role_you">自分</string>
+    <string name="party_role_host_you">ホスト・自分</string>
+    <string name="invite_with_link">リンクで招待</string>
+    <string name="invite_message">ビワスイムの招待が届いています！\n%1$s</string>
 </resources>

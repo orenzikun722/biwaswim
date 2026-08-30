@@ -41,10 +41,27 @@
         android:insetBottom="0dp"/>
 
     <Button
+        android:id="@+id/createParty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/white"
+        app:backgroundTint="@color/black"
+        app:strokeColor="@color/white"
+        app:strokeWidth="2dp"
+        app:cornerRadius="0dp"
+        android:padding="12dp"
+        android:layout_margin="0dp"
+        android:text="@string/create_party"
+        android:insetLeft="0dp"
+        android:insetTop="0dp"
+        android:insetRight="0dp"
+        android:insetBottom="0dp"/>
+
+    <Button
         android:id="@+id/joinParty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="@color/gray"
+        android:textColor="@color/white"
         app:backgroundTint="@color/black"
         app:strokeColor="@color/white"
         app:strokeWidth="2dp"
@@ -56,5 +73,43 @@
         android:insetTop="0dp"
         android:insetRight="0dp"
         android:insetBottom="0dp"/>
+
+
+    <Button
+        android:id="@+id/inviteParty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/white"
+        app:backgroundTint="@color/black"
+        app:strokeColor="@color/white"
+        app:strokeWidth="2dp"
+        app:cornerRadius="0dp"
+        android:padding="12dp"
+        android:layout_margin="0dp"
+        android:text="@string/invite_party"
+        android:insetLeft="0dp"
+        android:insetTop="0dp"
+        android:insetRight="0dp"
+        android:insetBottom="0dp"
+        android:visibility="gone"/>
+
+
+    <Button
+        android:id="@+id/leaveParty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/white"
+        app:backgroundTint="@color/black"
+        app:strokeColor="@color/white"
+        app:strokeWidth="2dp"
+        app:cornerRadius="0dp"
+        android:padding="12dp"
+        android:layout_margin="0dp"
+        android:text="@string/leave_party"
+        android:insetLeft="0dp"
+        android:insetTop="0dp"
+        android:insetRight="0dp"
+        android:insetBottom="0dp"
+        android:visibility="gone"/>
 
 </LinearLayout>

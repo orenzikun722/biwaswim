@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -64,5 +65,12 @@ dependencies {
     implementation(libs.jts.core)
     implementation(libs.jts.io.common)
     implementation(libs.okhttp)
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation(libs.kotlinx.serialization.json)
+    implementation("com.google.zxing:core:3.5.2")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 }

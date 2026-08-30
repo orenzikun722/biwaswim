@@ -8,7 +8,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Point
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.usb.UsbManager
@@ -18,14 +20,24 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
+import android.view.Display
+import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -54,8 +66,22 @@ import java.security.SecureRandom
 import java.util.Locale
 import androidx.core.content.edit
 import androidx.core.view.isInvisible
+import androidx.lifecycle.LifecycleOwner
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.snackbar.Snackbar
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.MultiFormatWriter
+import com.google.zxing.common.BitMatrix
 import com.rencon.biwaswim.party.PartyWebSocketManager
+import com.rencon.biwaswim.party.PartyWebSocketManager.companion.join
+import com.rencon.biwaswim.party.PartyWebSocketManager.PartyConnectionCallback
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
@@ -71,6 +97,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         private const val FAR_WARNING_NOTIFICATION_ID = 1000
         private const val FAR_WARNING_INTERVAL_MS = 20_000L
         private const val FAR_SHORE_THRESHOLD_METERS = 30.0
+        var hostAppId: String? = null
     }
 
     private class ConnectionHealth {
@@ -142,6 +169,12 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private lateinit var sideMenuGroup: LinearLayout
     private lateinit var sideMenuContainer: LinearLayout
     private lateinit var jumpToMarkerButton: Button
+    lateinit var joinPartyButton: Button
+    lateinit var createPartyButton: Button
+    lateinit var invitePartyButton: Button
+    lateinit var leavePartyButton: Button
+    private lateinit var partyMemberTextView: TextView
+    private val partyMembers = linkedSetOf<String>()
 
     // --- 遊泳トラッキング状態 ---
     private var isSwimmingActive: Boolean = false
@@ -152,9 +185,37 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private var swimTimerJob: Job? = null
     private var outOfWaterCounter: Int = 0
 
-    // --- GpsConnectionService バインド ---
     private var gpsService: GpsConnectionService? = null
     private var serviceBound = false
+
+    lateinit var partyId: String
+
+    // --- パーティ位置送信および受信機接続状態 ---
+    private var lastKnownLatitude: Double? = null
+    private var lastKnownLongitude: Double? = null
+    private var partyLocationSenderJob: Job? = null
+
+    private fun isReceiverConnected(): Boolean {
+        val usbConnected = gpsService?.isUsbConnected ?: usbHealth.isConnected
+        val btConnected = gpsService?.isBtConnected ?: btHealth.isConnected
+        return usbConnected || btConnected
+    }
+
+    private fun startPartyLocationSender() {
+        partyLocationSenderJob?.cancel()
+        partyLocationSenderJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(5000L)
+                if (isReceiverConnected() && PartyWebSocketManager.companion.wsConnection != null) {
+                    val lat = lastKnownLatitude
+                    val lon = lastKnownLongitude
+                    if (lat != null && lon != null && (lat != 0.0 || lon != 0.0)) {
+                        PartyWebSocketManager.companion.sendLocation(lat, lon)
+                    }
+                }
+            }
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -288,6 +349,183 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
+    private fun requestCameraPermission() {
+        if (!checkPermission.checkCameraPermission(context)) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+        }
+    }
+
+    /** パーティ未接続時のボタン状態に戻す（必ず UI スレッドから呼ぶこと） */
+    private fun resetPartyButtons() {
+        joinPartyButton.visibility = View.VISIBLE
+        createPartyButton.visibility = View.VISIBLE
+        invitePartyButton.visibility = View.GONE
+        leavePartyButton.visibility = View.GONE
+        joinPartyButton.isEnabled = true
+        createPartyButton.isEnabled = true
+    }
+
+    /** パーティ接続時のボタン状態に切り替える（必ず UI スレッドから呼ぶこと） */
+    private fun showPartyButtons() {
+        joinPartyButton.visibility = View.GONE
+        createPartyButton.visibility = View.GONE
+        invitePartyButton.visibility = View.VISIBLE
+        leavePartyButton.visibility = View.VISIBLE
+        joinPartyButton.isEnabled = true
+        createPartyButton.isEnabled = true
+    }
+
+    /** パーティメンバー表示の更新（必ず UI スレッドから呼ぶこと） */
+    private fun updatePartyMembersUI() {
+        runOnUiThread {
+            if (!::partyMemberTextView.isInitialized) return@runOnUiThread
+            if (partyMembers.isEmpty()) {
+                partyMemberTextView.visibility = View.GONE
+                partyMemberTextView.text = ""
+            } else {
+                val selfId = PartyWebSocketManager.companion.APP_ID
+                val memberLines = partyMembers.map { memberId ->
+                    val roleLabel = when {
+                        memberId == selfId && memberId == hostAppId -> " (${getString(R.string.party_role_host_you)})"
+                        memberId == hostAppId -> " (${getString(R.string.party_role_host)})"
+                        memberId == selfId -> " (${getString(R.string.party_role_you)})"
+                        else -> ""
+                    }
+                    "• $memberId$roleLabel"
+                }.joinToString("\n")
+
+                val header = getString(R.string.party_members_header, partyMembers.size)
+                partyMemberTextView.text = "$header\n$memberLines"
+                partyMemberTextView.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    /** パーティ接続コールバックの生成 */
+    private fun createPartyConnectionCallback(isCreator: Boolean = false): PartyConnectionCallback {
+        return object : PartyConnectionCallback {
+            override fun onConnected() {
+                runOnUiThread {
+                    showPartyButtons()
+                    if (isCreator) {
+                        showInviteDialog()
+                    }
+                    val selfId = PartyWebSocketManager.companion.APP_ID
+                    if (!selfId.isNullOrEmpty()) {
+                        partyMembers.add(selfId)
+                    }
+                    if (!hostAppId.isNullOrEmpty()) {
+                        partyMembers.add(hostAppId!!)
+                    }
+                    updatePartyMembersUI()
+                }
+            }
+
+            override fun onError(message: String) {
+                runOnUiThread {
+                    partyMembers.clear()
+                    updatePartyMembersUI()
+                    mapManager.clearMemberLocations()
+                    resetPartyButtons()
+                    val title = if (isCreator) getString(R.string.error_create_party_title) else getString(R.string.error_join_party_title)
+                    val msg = if (isCreator) getString(R.string.error_create_party_message, message) else getString(R.string.error_join_party_message, message)
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(title)
+                        .setMessage(msg)
+                        .setPositiveButton(getString(R.string.close), null)
+                        .show()
+                }
+            }
+
+            override fun onClosed() {
+                runOnUiThread {
+                    partyMembers.clear()
+                    updatePartyMembersUI()
+                    mapManager.clearMemberLocations()
+                    resetPartyButtons()
+                    Snackbar.make(mainView, getString(R.string.party_disconnected), Snackbar.LENGTH_LONG).show()
+                }
+            }
+
+            override fun onMemberJoined(clientId: String) {
+                val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
+                val msg = if (isSelf) {
+                    getString(R.string.party_you_joined)
+                } else {
+                    getString(R.string.party_member_joined, clientId)
+                }
+                runOnUiThread {
+                    partyMembers.add(clientId)
+                    updatePartyMembersUI()
+                    Snackbar.make(mainView, msg, Snackbar.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onMemberLeft(clientId: String) {
+                val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
+                val msg = if (isSelf) {
+                    getString(R.string.party_you_left)
+                } else {
+                    getString(R.string.party_member_left, clientId)
+                }
+                runOnUiThread {
+                    partyMembers.remove(clientId)
+                    mapManager.removeMemberLocation(clientId)
+                    updatePartyMembersUI()
+                    Snackbar.make(mainView, msg, Snackbar.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onMembersUpdated(clientIds: List<String>) {
+                Log.d(TAG, "Party members updated: ${clientIds.size}")
+                runOnUiThread {
+                    val removedMembers = partyMembers.filter { it !in clientIds }
+                    for (removed in removedMembers) {
+                        mapManager.removeMemberLocation(removed)
+                    }
+                    partyMembers.clear()
+                    partyMembers.addAll(clientIds)
+                    updatePartyMembersUI()
+                }
+            }
+
+            override fun onMemberLocationUpdated(
+                clientId: String,
+                latitude: Double,
+                longitude: Double
+            ) {
+                val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
+                if (!isSelf) {
+                    mapManager.updateMemberLocation(clientId, latitude, longitude)
+                }
+            }
+        }
+    }
+
+    private fun invitedFromLink(url: String) {
+        if (url.startsWith("biwaswim://join")) {
+            hostAppId = Uri.parse(url).getQueryParameter("hostAppId").toString()
+            partyId = Uri.parse(url).getQueryParameter("partyId").toString()
+
+            if (hostAppId != null && partyId != null && hostAppId != "" && partyId != "") {
+                partyMembers.clear()
+                updatePartyMembersUI()
+                // 接続中はボタンを無効化して二重タップを防止する
+                joinPartyButton.isEnabled = false
+                createPartyButton.isEnabled = false
+                lifecycleScope.launch {
+                    PartyWebSocketManager.companion.join(
+                        partyId,
+                        hostAppId!!,
+                        callback = createPartyConnectionCallback(isCreator = false)
+                    )
+                }
+            } else {
+                Snackbar.make(mainView, getString(R.string.error_join_party), Snackbar.LENGTH_LONG)
+                    .show()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -312,6 +550,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         }
         distanceFromShore = findViewById(R.id.distanceFromShore)
         swimStats = findViewById(R.id.swimStats)
+        partyMemberTextView = findViewById(R.id.partyMember)
 
         overlayDrawable = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -360,6 +599,74 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
         MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
 
+
+        joinPartyButton = findViewById<Button>(R.id.joinParty)
+        createPartyButton = findViewById<Button>(R.id.createParty)
+        invitePartyButton = findViewById<Button>(R.id.inviteParty)
+        leavePartyButton = findViewById<Button>(R.id.leaveParty)
+        joinPartyButton.setOnClickListener {
+            showQrScannerDialog(
+                this,
+                this
+            ) { qrText ->
+
+                Log.d(TAG, "QR code scanned: $qrText")
+                invitedFromLink(qrText)
+            }
+        }
+        createPartyButton.setOnClickListener {
+            // 接続中はボタンを無効化して二重タップを防止する
+            joinPartyButton.isEnabled = false
+            createPartyButton.isEnabled = false
+            hostAppId = PartyWebSocketManager.companion.APP_ID ?: ""
+            partyMembers.clear()
+            updatePartyMembersUI()
+            lifecycleScope.launch {
+                try {
+                    val createdPartyId: String = PartyWebSocketManager.companion.create()
+                    partyId = createdPartyId
+                    join(
+                        partyId,
+                        hostAppId!!,
+                        callback = createPartyConnectionCallback(isCreator = true)
+                    )
+                } catch (e: Exception) {
+                    // create() 自体が失敗した場合（ネットワークエラーなど）
+                    Log.e(TAG, "Failed to create party: ${e.message}", e)
+                    runOnUiThread {
+                        resetPartyButtons()
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle(getString(R.string.error_create_party_title))
+                            .setMessage(getString(R.string.error_create_party_message, e.localizedMessage ?: "不明なエラー"))
+                            .setPositiveButton(getString(R.string.close), null)
+                            .show()
+                    }
+                }
+            }
+        }
+
+        invitePartyButton.setOnClickListener {
+            showSideMenu()
+            showInviteDialog()
+        }
+
+
+        val uri = intent.data
+        if (uri != null && uri.toString().startsWith("biwaswim://join")) {
+            invitedFromLink(uri?.toString() ?: "")
+        }
+
+        leavePartyButton.setOnClickListener {
+            hostAppId = ""
+            partyMembers.clear()
+            updatePartyMembersUI()
+            mapManager.clearMemberLocations()
+            lifecycleScope.launch {
+                PartyWebSocketManager.companion.leave()
+            }
+            resetPartyButtons()
+            Snackbar.make(mainView, getString(R.string.party_you_left), Snackbar.LENGTH_SHORT).show()
+        }
         weatherWarningChannel = NotificationChannel(
             "weatherWarning",
             "天気の通知",
@@ -377,6 +684,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
         requestPermissions()
 
+        startPartyLocationSender()
+
         lifecycleScope.launch(Dispatchers.IO) {
             val prefs = context.getSharedPreferences("app_data", Context.MODE_PRIVATE)
             var id = prefs.getString("app_id", null)
@@ -387,9 +696,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 }
                 id = generatedId
             }
-            PartyWebSocketManager().apply {
-                APP_ID = id
-            }
+            PartyWebSocketManager.companion.APP_ID = id
         }
     }
 
@@ -683,6 +990,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 health.lastValidLocationTime = now
                 val lat = detail.location.latitude
                 val lon = detail.location.longitude
+                lastKnownLatitude = lat
+                lastKnownLongitude = lon
 
                 val distance = calculateDistance(context, lat, lon)
                 val inWater = isSwimming(context, lat, lon)
@@ -822,6 +1131,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     }
 
     override fun onLocationReceived(location: GpsLocation) {
+        lastKnownLatitude = location.latitude
+        lastKnownLongitude = location.longitude
         // handleNmeaDetail で処理されるためここでは追加処理なし
     }
 
@@ -1049,6 +1360,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        partyLocationSenderJob?.cancel()
+        partyLocationSenderJob = null
         stopFarShoreWarning()
         selectionDialog?.dismiss()
         selectionDialog = null
@@ -1086,5 +1399,199 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 append(chars[random.nextInt(chars.length)])
             }
         }
+    }
+    fun generateQRCode(text: String, width: Int, height: Int): Bitmap? {
+        return try {
+            val bitMatrix: BitMatrix = MultiFormatWriter().encode(
+                text,
+                BarcodeFormat.QR_CODE,
+                width,
+                height
+            )
+
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+                }
+            }
+            bmp
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    fun showInviteDialog() {
+        val display: Display = this.windowManager.defaultDisplay
+        val point = Point()
+        display.getSize(point)
+        val bitmapSize = (point.x * 0.6).toInt()
+        val shareButtonSize = (point.x *0.8).toInt()
+        val shareUrl = "https://orenzikun722.github.io/biwaswim-page/invite.html?partyId=$partyId&hostAppId=$hostAppId"
+        val bitmap = generateQRCode(shareUrl, bitmapSize, bitmapSize)
+
+
+        val imageView = ImageView(context).apply {
+            setImageBitmap(bitmap)
+
+            val padding = 50
+            setPadding(padding, padding, padding, padding)
+        }
+        val shareButton = MaterialButton(context).apply {
+            icon = getDrawable(R.drawable.baseline_share_24)
+            text = getString(R.string.invite_with_link)
+            setPadding(20, 0, 20, 0)
+            layoutParams = ViewGroup.LayoutParams(
+                shareButtonSize,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        shareButton.setOnClickListener {
+            val sendIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                putExtra(Intent.EXTRA_TEXT, getString(R.string.invite_message, shareUrl))
+                type = "text/plain"
+            }
+            val shareIntent = Intent.createChooser(sendIntent, null)
+            startActivity(shareIntent)
+        }
+        val linearLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(imageView)
+            addView(shareButton)
+        }
+
+        android.app.AlertDialog.Builder(this)
+            .setView(linearLayout)
+            .setPositiveButton(getString(R.string.close)) { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    fun challengeShowQrScanner(){
+        if(!checkPermission.checkCameraPermission(context)){
+            requestCameraPermission()
+        }
+    }
+    fun showQrScannerDialog(
+        context: Context,
+        lifecycleOwner: LifecycleOwner,
+        onQrDetected: (String) -> Unit
+    ) {
+        challengeShowQrScanner()
+        val view = LayoutInflater.from(context)
+            .inflate(R.layout.dialog_qrcode_scanner, null)
+
+        val previewView = view.findViewById<PreviewView>(R.id.previewView)
+
+        val dialog = AlertDialog.Builder(context)
+            .setTitle(getString(R.string.scan_qrcode))
+            .setView(view)
+            .setNegativeButton(getString(R.string.cancel), null)
+            .create()
+
+        dialog.setOnShowListener {
+            startCamera(
+                context,
+                lifecycleOwner,
+                previewView
+            ) { result ->
+
+                onQrDetected(result)
+
+                dialog.dismiss()
+            }
+        }
+
+        dialog.show()
+    }
+    fun startCamera(
+        context: Context,
+        lifecycleOwner: LifecycleOwner,
+        previewView: PreviewView,
+        onQrDetected: (String) -> Unit
+    ) {
+        val cameraProviderFuture =
+            ProcessCameraProvider.getInstance(context)
+
+        cameraProviderFuture.addListener({
+
+            val cameraProvider = cameraProviderFuture.get()
+
+            val preview = Preview.Builder()
+                .build()
+                .also {
+                    it.surfaceProvider =
+                        previewView.surfaceProvider
+                }
+
+            val options = BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(
+                    Barcode.FORMAT_QR_CODE
+                )
+                .build()
+
+            val scanner =
+                BarcodeScanning.getClient(options)
+
+            var detected = false
+
+            val imageAnalysis =
+                ImageAnalysis.Builder()
+                    .build()
+
+            imageAnalysis.setAnalyzer(
+                ContextCompat.getMainExecutor(context)
+            ) { imageProxy ->
+
+                if (detected) {
+                    imageProxy.close()
+                    return@setAnalyzer
+                }
+
+                val mediaImage = imageProxy.image
+
+                if (mediaImage != null) {
+                    val image = InputImage.fromMediaImage(
+                        mediaImage,
+                        imageProxy.imageInfo.rotationDegrees
+                    )
+
+                    scanner.process(image)
+                        .addOnSuccessListener { barcodes ->
+
+                            for (barcode in barcodes) {
+                                val value = barcode.rawValue
+
+                                if (value != null && !detected) {
+                                    detected = true
+                                    onQrDetected(value)
+                                }
+                            }
+                        }
+                        .addOnCompleteListener {
+                            imageProxy.close()
+                        }
+                } else {
+                    imageProxy.close()
+                }
+            }
+
+            val cameraSelector =
+                CameraSelector.DEFAULT_BACK_CAMERA
+
+            cameraProvider.unbindAll()
+
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                cameraSelector,
+                preview,
+                imageAnalysis
+            )
+
+        }, ContextCompat.getMainExecutor(context))
     }
 }

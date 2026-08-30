@@ -1,6 +1,7 @@
 package com.rencon.biwaswim.map
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.Bundle
@@ -19,6 +20,7 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -41,6 +43,19 @@ class MapManager(
         private const val SOURCE_ID = "marker-source"
         private const val LAYER_ID = "marker-layer"
         private const val ICON_ID = "marker-icon"
+
+        private const val PARTY_MARKER_SOURCE_ID = "party-marker-source"
+        private const val PARTY_MARKER_LAYER_ID = "party-marker-layer"
+        private const val PARTY_ICON_PREFIX = "party-marker-icon-"
+
+        private val PARTY_MEMBER_COLORS = intArrayOf(
+            Color.parseColor("#1E88E5"), // 青 (Blue)
+            Color.parseColor("#FB8C00"), // オレンジ (Orange)
+            Color.parseColor("#43A047"), // 緑 (Green)
+            Color.parseColor("#8E24AA"), // 紫 (Purple)
+            Color.parseColor("#00ACC1"), // シアン (Cyan)
+            Color.parseColor("#FFD600")  // イエロー (Yellow)
+        )
 
         private const val TRACK_SOURCE_ID = "swim-track-source"
         private const val TRACK_LAYER_ID = "swim-track-layer"
@@ -111,6 +126,10 @@ class MapManager(
 
     private var markerSource: GeoJsonSource? = null
     private var markerLayer: SymbolLayer? = null
+    private var partyMarkerSource: GeoJsonSource? = null
+    private var partyMarkerLayer: SymbolLayer? = null
+    private val memberLocations = mutableMapOf<String, LatLng>()
+
     private var trackSource: GeoJsonSource? = null
     private var trackLayer: LineLayer? = null
 
@@ -235,6 +254,124 @@ class MapManager(
             applyTrackUpdate()
         }
     }
+
+    /**
+     * パーティメンバーのマーカー用画像・レイヤーの初期化・更新
+     */
+    private fun setupPartyMarkers(loadedStyle: Style) {
+        val baseBitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
+        PARTY_MEMBER_COLORS.forEachIndexed { index, color ->
+            val tinted = createTintedMarkerBitmap(baseBitmap, color)
+            loadedStyle.addImage("$PARTY_ICON_PREFIX$index", tinted)
+        }
+
+        val features = memberLocations.map { (clientId, latLng) ->
+            val feature = Feature.fromGeometry(Point.fromLngLat(latLng.longitude, latLng.latitude))
+            val colorIndex = (Math.abs(clientId.hashCode()) % PARTY_MEMBER_COLORS.size)
+            feature.addStringProperty("iconImage", "$PARTY_ICON_PREFIX$colorIndex")
+            feature.addStringProperty("label", clientId)
+            feature
+        }
+        val featureCollection = FeatureCollection.fromFeatures(features)
+        val source = GeoJsonSource(PARTY_MARKER_SOURCE_ID, featureCollection)
+
+        loadedStyle.addSource(source)
+        partyMarkerSource = loadedStyle.getSourceAs(PARTY_MARKER_SOURCE_ID)
+
+        val layer = SymbolLayer(PARTY_MARKER_LAYER_ID, PARTY_MARKER_SOURCE_ID).apply {
+            setProperties(
+                PropertyFactory.iconImage(Expression.get("iconImage")),
+                PropertyFactory.iconSize(0.25f),
+                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                PropertyFactory.iconOffset(arrayOf(0f, 100f)),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+                PropertyFactory.textField(Expression.get("label")),
+                PropertyFactory.textSize(11f),
+                PropertyFactory.textColor(Color.WHITE),
+                PropertyFactory.textHaloColor(Color.BLACK),
+                PropertyFactory.textHaloWidth(1.5f),
+                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+                PropertyFactory.textOffset(arrayOf(0f, 0.6f)),
+                PropertyFactory.textAllowOverlap(true),
+                PropertyFactory.visibility(Property.VISIBLE)
+            )
+        }
+        loadedStyle.addLayer(layer)
+        partyMarkerLayer = loadedStyle.getLayerAs(PARTY_MARKER_LAYER_ID)
+    }
+
+    /**
+     * パーティメンバーの位置を更新または追加します。
+     */
+    fun updateMemberLocation(clientId: String, latitude: Double, longitude: Double) {
+        runOnMainThread {
+            memberLocations[clientId] = LatLng(latitude, longitude)
+            applyPartyMarkersUpdate()
+        }
+    }
+
+    /**
+     * 指定したパーティメンバーのマーカーを削除します。
+     */
+    fun removeMemberLocation(clientId: String) {
+        runOnMainThread {
+            memberLocations.remove(clientId)
+            applyPartyMarkersUpdate()
+        }
+    }
+
+    /**
+     * 全パーティメンバーのマーカーを削除します。
+     */
+    fun clearMemberLocations() {
+        runOnMainThread {
+            memberLocations.clear()
+            applyPartyMarkersUpdate()
+        }
+    }
+
+    private fun applyPartyMarkersUpdate() {
+        val features = memberLocations.map { (clientId, latLng) ->
+            val feature = Feature.fromGeometry(Point.fromLngLat(latLng.longitude, latLng.latitude))
+            val colorIndex = (Math.abs(clientId.hashCode()) % PARTY_MEMBER_COLORS.size)
+            feature.addStringProperty("iconImage", "$PARTY_ICON_PREFIX$colorIndex")
+            feature.addStringProperty("label", clientId)
+            feature
+        }
+        partyMarkerSource?.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    /**
+     * ピン画像の中央の白穴を維持しつつ本体部分を指定色に着色した Bitmap を生成します。
+     */
+    private fun createTintedMarkerBitmap(original: Bitmap, tintColor: Int): Bitmap {
+        val width = original.width
+        val height = original.height
+        val pixels = IntArray(width * height)
+        original.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        for (i in pixels.indices) {
+            val color = pixels[i]
+            val alpha = Color.alpha(color)
+            if (alpha > 0) {
+                val r = Color.red(color)
+                val g = Color.green(color)
+                val b = Color.blue(color)
+                // 中央の白い穴の部分（白系）は白のまま維持し、周囲のピン本体のみを着色
+                if (!(r > 220 && g > 220 && b > 220)) {
+                    pixels[i] = Color.argb(
+                        alpha,
+                        Color.red(tintColor),
+                        Color.green(tintColor),
+                        Color.blue(tintColor)
+                    )
+                }
+            }
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
     private fun resetMarker(loadedStyle: Style) {
         val point = Point.fromLngLat(currentLongitude, currentLatitude)
         val feature = Feature.fromGeometry(point)
@@ -258,6 +395,9 @@ class MapManager(
         loadedStyle.addLayer(layer)
         markerSource = loadedStyle.getSourceAs(SOURCE_ID)
         markerLayer = loadedStyle.getLayerAs(LAYER_ID)
+
+        // パーティメンバーのマーカーもスタイル再読み込み時にセットアップ
+        setupPartyMarkers(loadedStyle)
 
         // すでに位置が更新されていた場合、マーカーを表示
         if (currentLatitude != 0.0 || currentLongitude != 0.0) {
