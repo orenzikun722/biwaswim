@@ -349,9 +349,29 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            openQrScanner()
+        } else {
+            Snackbar.make(mainView, getString(R.string.needed_permission), Snackbar.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openQrScanner() {
+        showQrScannerDialog(
+            this,
+            this
+        ) { qrText ->
+            Log.d(TAG, "QR code scanned: $qrText")
+            invitedFromLink(qrText)
+        }
+    }
+
     private fun requestCameraPermission() {
         if (!checkPermission.checkCameraPermission(context)) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -503,11 +523,14 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     }
 
     private fun invitedFromLink(url: String) {
-        if (url.startsWith("biwaswim://join")) {
-            hostAppId = Uri.parse(url).getQueryParameter("hostAppId").toString()
-            partyId = Uri.parse(url).getQueryParameter("partyId").toString()
+        try {
+            val uri = Uri.parse(url)
+            val parsedHostAppId = uri.getQueryParameter("hostAppId") ?: uri.getQueryParameter("hostClientId")
+            val parsedPartyId = uri.getQueryParameter("partyId") ?: uri.getQueryParameter("roomId")
 
-            if (hostAppId != null && partyId != null && hostAppId != "" && partyId != "") {
+            if (!parsedHostAppId.isNullOrEmpty() && !parsedPartyId.isNullOrEmpty()) {
+                hostAppId = parsedHostAppId
+                partyId = parsedPartyId
                 partyMembers.clear()
                 updatePartyMembersUI()
                 // 接続中はボタンを無効化して二重タップを防止する
@@ -524,6 +547,9 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 Snackbar.make(mainView, getString(R.string.error_join_party), Snackbar.LENGTH_LONG)
                     .show()
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse invite link/QR: $url", e)
+            Snackbar.make(mainView, getString(R.string.error_join_party), Snackbar.LENGTH_LONG).show()
         }
     }
 
@@ -605,13 +631,10 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         invitePartyButton = findViewById<Button>(R.id.inviteParty)
         leavePartyButton = findViewById<Button>(R.id.leaveParty)
         joinPartyButton.setOnClickListener {
-            showQrScannerDialog(
-                this,
-                this
-            ) { qrText ->
-
-                Log.d(TAG, "QR code scanned: $qrText")
-                invitedFromLink(qrText)
+            if (checkPermission.checkCameraPermission(context)) {
+                openQrScanner()
+            } else {
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
         }
         createPartyButton.setOnClickListener {
@@ -651,9 +674,20 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         }
 
 
+        val prefs = context.getSharedPreferences("app_data", Context.MODE_PRIVATE)
+        var id = prefs.getString("app_id", null)
+        if (id == null) {
+            val generatedId = generateRandomString()
+            prefs.edit {
+                putString("app_id", generatedId)
+            }
+            id = generatedId
+        }
+        PartyWebSocketManager.companion.APP_ID = id
+
         val uri = intent.data
-        if (uri != null && uri.toString().startsWith("biwaswim://join")) {
-            invitedFromLink(uri?.toString() ?: "")
+        if (uri != null) {
+            invitedFromLink(uri.toString())
         }
 
         leavePartyButton.setOnClickListener {
@@ -685,19 +719,6 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         requestPermissions()
 
         startPartyLocationSender()
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            val prefs = context.getSharedPreferences("app_data", Context.MODE_PRIVATE)
-            var id = prefs.getString("app_id", null)
-            if (id == null) {
-                val generatedId = generateRandomString()
-                prefs.edit {
-                    putString("app_id", generatedId)
-                }
-                id = generatedId
-            }
-            PartyWebSocketManager.companion.APP_ID = id
-        }
     }
 
     private fun setupClasses() {
@@ -725,6 +746,10 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         setIntent(intent)
         if (UsbManager.ACTION_USB_DEVICE_ATTACHED == intent.action) {
             gpsService?.connectUsb()
+        }
+        val uri = intent.data
+        if (uri != null) {
+            invitedFromLink(uri.toString())
         }
     }
 
@@ -1471,17 +1496,11 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             .show()
     }
 
-    fun challengeShowQrScanner(){
-        if(!checkPermission.checkCameraPermission(context)){
-            requestCameraPermission()
-        }
-    }
     fun showQrScannerDialog(
         context: Context,
         lifecycleOwner: LifecycleOwner,
         onQrDetected: (String) -> Unit
     ) {
-        challengeShowQrScanner()
         val view = LayoutInflater.from(context)
             .inflate(R.layout.dialog_qrcode_scanner, null)
 
