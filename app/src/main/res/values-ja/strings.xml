@@ -51,9 +51,9 @@
     <string name="scan_qrcode">QRコード読み取り</string>
     <string name="error_join_party">パーティーへの参加に失敗しました</string>
     <string name="error_join_party_title">接続エラー</string>
-    <string name="error_join_party_message">パーティーへの参加に失敗しました: %1$s</string>
+    <string name="error_join_party_message">パーティーへの参加に失敗しました\n</string>
     <string name="error_create_party_title">パーティー作成エラー</string>
-    <string name="error_create_party_message">パーティーの作成に失敗しました: %1$s</string>
+    <string name="error_create_party_message">パーティーの作成に失敗しました\n</string>
     <string name="leave_party">パーティーを退室</string>
     <string name="ok">OK</string>
     <string name="party_you_joined">パーティーに参加しました</string>
@@ -67,4 +67,16 @@
     <string name="party_role_host_you">ホスト・自分</string>
     <string name="invite_with_link">リンクで招待</string>
     <string name="invite_message">ビワスイムの招待が届いています！\n%1$s</string>
+    <string name="username">ユーザー名</string>
+    <string name="change_username">ユーザー名の変更</string>
+    <string name="set_username">ユーザー名を設定</string>
+    <string name="username_hint">名前を入力してください</string>
+    <string name="username_dialog_message">パーティーで表示する名前を入力してください</string>
+    <string name="username_empty_error">ユーザー名を入力してください</string>
+    <string name="party_default_member_name">メンバー</string>
+    <string name="save">保存</string>
+    <string name="change">変更</string>
+    <string name="map_style">マップスタイル</string>
+    <string name="error_failed_to_connect">サーバーへの接続に失敗しました</string>
+    <string name="error_unknown_message">不明なエラー</string>
 </resources>

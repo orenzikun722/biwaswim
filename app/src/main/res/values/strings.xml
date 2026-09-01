@@ -50,9 +50,9 @@
     <string name="scan_qrcode">Scan QR Code</string>
     <string name="error_join_party">Failed to join the party.</string>
     <string name="error_join_party_title">Connection Failed</string>
-    <string name="error_join_party_message">Failed to join the party: %1$s</string>
+    <string name="error_join_party_message">Failed to join the party\n</string>
     <string name="error_create_party_title">Party Creation Failed</string>
-    <string name="error_create_party_message">Failed to create the party: %1$s</string>
+    <string name="error_create_party_message">Failed to create the party\n</string>
     <string name="leave_party">Leave party</string>
     <string name="ok">OK</string>
     <string name="party_you_joined">You joined the party!</string>
@@ -66,5 +66,17 @@
     <string name="party_role_host_you">Host, You</string>
     <string name="invite_with_link">Invite with link</string>
     <string name="invite_message">You have received an invitation to Biwa Swim!\n%1$s</string>
+    <string name="username">User Name</string>
+    <string name="change_username">Change User Name</string>
+    <string name="set_username">Set User Name</string>
+    <string name="username_hint">Enter your user name</string>
+    <string name="username_dialog_message">Please enter a name to display in the party.</string>
+    <string name="username_empty_error">User name cannot be empty.</string>
+    <string name="party_default_member_name">Member</string>
+    <string name="save">Save</string>
+    <string name="change">Change</string>
+    <string name="map_style">Map Style</string>
+    <string name="error_failed_to_connect">Failed to connect to server</string>
+    <string name="error_unknown_message">Unknown error</string>
 
 </resources>

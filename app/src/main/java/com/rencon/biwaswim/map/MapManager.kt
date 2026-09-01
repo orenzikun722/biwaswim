@@ -14,13 +14,21 @@ import android.widget.TextView
 import com.google.android.material.snackbar.Snackbar
 import com.rencon.biwaswim.MainActivity
 import com.rencon.biwaswim.R
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Typeface
+import org.maplibre.android.annotations.Icon
+import org.maplibre.android.annotations.IconFactory
+import org.maplibre.android.annotations.Marker
+import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
-import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -43,10 +51,6 @@ class MapManager(
         private const val SOURCE_ID = "marker-source"
         private const val LAYER_ID = "marker-layer"
         private const val ICON_ID = "marker-icon"
-
-        private const val PARTY_MARKER_SOURCE_ID = "party-marker-source"
-        private const val PARTY_MARKER_LAYER_ID = "party-marker-layer"
-        private const val PARTY_ICON_PREFIX = "party-marker-icon-"
 
         private val PARTY_MEMBER_COLORS = intArrayOf(
             Color.parseColor("#1E88E5"), // 青 (Blue)
@@ -126,9 +130,12 @@ class MapManager(
 
     private var markerSource: GeoJsonSource? = null
     private var markerLayer: SymbolLayer? = null
-    private var partyMarkerSource: GeoJsonSource? = null
-    private var partyMarkerLayer: SymbolLayer? = null
+
+    // パーティメンバーのマーカー管理
     private val memberLocations = mutableMapOf<String, LatLng>()
+    private val memberNames = mutableMapOf<String, String>()
+    private val partyMarkers = mutableMapOf<String, Marker>()
+    private val partyMarkerIcons = mutableMapOf<String, Icon>()
 
     private var trackSource: GeoJsonSource? = null
     private var trackLayer: LineLayer? = null
@@ -154,24 +161,31 @@ class MapManager(
                 } else {
                     FeatureCollection.fromFeatures(emptyArray())
                 }
-                val tSource = GeoJsonSource(TRACK_SOURCE_ID, initialTrackFeatureCollection)
-                loadedStyle.addSource(tSource)
+                if (loadedStyle.getSource(TRACK_SOURCE_ID) == null) {
+                    val tSource = GeoJsonSource(TRACK_SOURCE_ID, initialTrackFeatureCollection)
+                    loadedStyle.addSource(tSource)
+                }
                 trackSource = loadedStyle.getSourceAs(TRACK_SOURCE_ID)
 
-                val tLayer = LineLayer(TRACK_LAYER_ID, TRACK_SOURCE_ID).apply {
-                    setProperties(
-                        PropertyFactory.lineColor(Color.parseColor("#00E5FF")), // 鮮やかなシアン
-                        PropertyFactory.lineWidth(6.0f),
-                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                        PropertyFactory.lineOpacity(0.9f)
-                    )
+                if (loadedStyle.getLayer(TRACK_LAYER_ID) == null) {
+                    val tLayer = LineLayer(TRACK_LAYER_ID, TRACK_SOURCE_ID).apply {
+                        setProperties(
+                            PropertyFactory.lineColor(Color.parseColor("#00E5FF")), // 鮮やかなシアン
+                            PropertyFactory.lineWidth(6.0f),
+                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                            PropertyFactory.lineOpacity(0.9f)
+                        )
+                    }
+                    loadedStyle.addLayer(tLayer)
                 }
-                loadedStyle.addLayer(tLayer)
                 trackLayer = loadedStyle.getLayerAs(TRACK_LAYER_ID)
 
-                // 2. マーカー用 Source & SymbolLayer の初期化（LineLayerの上に描画）
+                // 2. 自身用マーカーの初期化
                 resetMarker(loadedStyle)
+
+                // 3. パーティメンバーマーカーの再描画
+                reapplyAllPartyMarkers()
 
                 onMapReady?.invoke()
             }
@@ -206,6 +220,7 @@ class MapManager(
     }
 
     private fun applyMarkerLocation(latitude: Double, longitude: Double) {
+        Log.d("MapManager", "applyMarkerLocation: lat=$latitude, lon=$longitude, markerSource=$markerSource, markerLayer=$markerLayer")
         markerSource?.setGeoJson(Point.fromLngLat(longitude, latitude))
         markerLayer?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
 
@@ -256,58 +271,144 @@ class MapManager(
     }
 
     /**
-     * パーティメンバーのマーカー用画像・レイヤーの初期化・更新
+     * パーティメンバーのマーカー用 Bitmap を生成します（カラーピン＋角丸名札バッジ）。
      */
-    private fun setupPartyMarkers(loadedStyle: Style) {
+    private fun createPartyMemberMarkerBitmap(displayName: String, color: Int): Bitmap {
         val baseBitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
-        PARTY_MEMBER_COLORS.forEachIndexed { index, color ->
+        val scaledWidth = 64
+        val scaledHeight = 64
+        val pinBitmap = if (baseBitmap != null) {
             val tinted = createTintedMarkerBitmap(baseBitmap, color)
-            loadedStyle.addImage("$PARTY_ICON_PREFIX$index", tinted)
+            Bitmap.createScaledBitmap(tinted, scaledWidth, scaledHeight, true)
+        } else {
+            val bmp = Bitmap.createBitmap(scaledWidth, scaledHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+            canvas.drawCircle(scaledWidth / 2f, scaledHeight / 2f, scaledWidth / 2f - 2f, paint)
+            bmp
         }
 
-        val features = memberLocations.map { (clientId, latLng) ->
-            val feature = Feature.fromGeometry(Point.fromLngLat(latLng.longitude, latLng.latitude))
-            val colorIndex = (Math.abs(clientId.hashCode()) % PARTY_MEMBER_COLORS.size)
-            feature.addStringProperty("iconImage", "$PARTY_ICON_PREFIX$colorIndex")
-            feature.addStringProperty("label", clientId)
-            feature
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = Color.WHITE
+            textSize = 24f
+            typeface = Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
         }
-        val featureCollection = FeatureCollection.fromFeatures(features)
-        val source = GeoJsonSource(PARTY_MARKER_SOURCE_ID, featureCollection)
+        val textBounds = Rect()
+        textPaint.getTextBounds(displayName, 0, displayName.length, textBounds)
+        val textWidth = textBounds.width()
+        val textHeight = textBounds.height()
 
-        loadedStyle.addSource(source)
-        partyMarkerSource = loadedStyle.getSourceAs(PARTY_MARKER_SOURCE_ID)
+        val paddingH = 14
+        val paddingV = 6
+        val badgeWidth = maxOf(scaledWidth, textWidth + paddingH * 2)
+        val badgeHeight = textHeight + paddingV * 2
+        val spacing = 2
 
-        val layer = SymbolLayer(PARTY_MARKER_LAYER_ID, PARTY_MARKER_SOURCE_ID).apply {
-            setProperties(
-                PropertyFactory.iconImage(Expression.get("iconImage")),
-                PropertyFactory.iconSize(0.25f),
-                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                PropertyFactory.iconOffset(arrayOf(0f, 100f)),
-                PropertyFactory.iconAllowOverlap(true),
-                PropertyFactory.iconIgnorePlacement(true),
-                PropertyFactory.textField(Expression.get("label")),
-                PropertyFactory.textSize(11f),
-                PropertyFactory.textColor(Color.WHITE),
-                PropertyFactory.textHaloColor(Color.BLACK),
-                PropertyFactory.textHaloWidth(1.5f),
-                PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
-                PropertyFactory.textOffset(arrayOf(0f, 0.6f)),
-                PropertyFactory.textAllowOverlap(true),
-                PropertyFactory.visibility(Property.VISIBLE)
-            )
+        val totalWidth = badgeWidth
+        val totalHeight = scaledHeight + spacing + badgeHeight
+
+        val resultBitmap = Bitmap.createBitmap(totalWidth, totalHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(resultBitmap)
+
+        // 1. ピン画像を上部中央に配置
+        val pinLeft = (totalWidth - scaledWidth) / 2f
+        canvas.drawBitmap(pinBitmap, pinLeft, 0f, null)
+
+        // 2. 名札バッジ背景
+        val badgeRect = RectF(0f, (scaledHeight + spacing).toFloat(), totalWidth.toFloat(), totalHeight.toFloat())
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = Color.parseColor("#D9000000") // 85% opacity black
         }
-        loadedStyle.addLayer(layer)
-        partyMarkerLayer = loadedStyle.getLayerAs(PARTY_MARKER_LAYER_ID)
+        canvas.drawRoundRect(badgeRect, 8f, 8f, bgPaint)
+
+        // 名札バッジ枠線
+        val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.STROKE
+            strokeWidth = 2.5f
+        }
+        canvas.drawRoundRect(badgeRect, 8f, 8f, strokePaint)
+
+        // 3. ラベルテキスト描画
+        val textX = totalWidth / 2f
+        val textY = scaledHeight + spacing + paddingV + textHeight - 1f
+        canvas.drawText(displayName, textX, textY, textPaint)
+
+        return resultBitmap
+    }
+
+    private fun getMemberIcon(clientId: String, displayName: String): Icon {
+        val colorIndex = (clientId.hashCode() and 0x7FFFFFFF) % PARTY_MEMBER_COLORS.size
+        val color = PARTY_MEMBER_COLORS[colorIndex]
+        val bmp = createPartyMemberMarkerBitmap(displayName, color)
+        val icon = IconFactory.getInstance(context).fromBitmap(bmp)
+        partyMarkerIcons[clientId] = icon
+        return icon
+    }
+
+    /**
+     * パーティメンバーのユーザー名を更新し、マーカーバッジを再描画します。
+     */
+    fun updateMemberName(clientId: String, userName: String) {
+        if (userName.isBlank()) return
+        Log.d("MapManager", "updateMemberName: clientId=$clientId, userName=$userName")
+        runOnMainThread {
+            val oldName = memberNames[clientId]
+            memberNames[clientId] = userName
+            if (oldName != userName) {
+                val marker = partyMarkers[clientId]
+                if (marker != null) {
+                    val icon = getMemberIcon(clientId, userName)
+                    marker.icon = icon
+                    marker.title = userName
+                    Log.d("MapManager", "Updated existing marker badge for $clientId to '$userName'")
+                }
+            }
+        }
     }
 
     /**
      * パーティメンバーの位置を更新または追加します。
      */
-    fun updateMemberLocation(clientId: String, latitude: Double, longitude: Double) {
+    fun updateMemberLocation(clientId: String, latitude: Double, longitude: Double, displayName: String? = null) {
+        Log.d("MapManager", "updateMemberLocation: clientId=$clientId, lat=$latitude, lon=$longitude, displayName=$displayName")
         runOnMainThread {
-            memberLocations[clientId] = LatLng(latitude, longitude)
-            applyPartyMarkersUpdate()
+            if (!displayName.isNullOrBlank()) {
+                memberNames[clientId] = displayName
+            }
+            val effectiveName = memberNames[clientId] ?: (if (!displayName.isNullOrBlank()) displayName else context.getString(R.string.party_default_member_name))
+
+            val latLng = LatLng(latitude, longitude)
+            memberLocations[clientId] = latLng
+
+            val map = mapLibreMap
+            if (map == null) {
+                Log.w("MapManager", "updateMemberLocation: mapLibreMap is not ready yet for $clientId")
+                return@runOnMainThread
+            }
+
+            val existingMarker = partyMarkers[clientId]
+            if (existingMarker != null) {
+                existingMarker.position = latLng
+                if (existingMarker.title != effectiveName) {
+                    val icon = getMemberIcon(clientId, effectiveName)
+                    existingMarker.icon = icon
+                    existingMarker.title = effectiveName
+                }
+                Log.d("MapManager", "Moved existing marker for $clientId to $latLng")
+            } else {
+                val icon = partyMarkerIcons.getOrPut(clientId) {
+                    getMemberIcon(clientId, effectiveName)
+                }
+                val markerOptions = MarkerOptions()
+                    .position(latLng)
+                    .title(effectiveName)
+                    .icon(icon)
+                val newMarker = map.addMarker(markerOptions)
+                partyMarkers[clientId] = newMarker
+                Log.d("MapManager", "Added new Annotation Marker for $clientId at $latLng with name '$effectiveName' (total active markers: ${partyMarkers.size})")
+            }
         }
     }
 
@@ -315,9 +416,15 @@ class MapManager(
      * 指定したパーティメンバーのマーカーを削除します。
      */
     fun removeMemberLocation(clientId: String) {
+        Log.d("MapManager", "removeMemberLocation: clientId=$clientId")
         runOnMainThread {
             memberLocations.remove(clientId)
-            applyPartyMarkersUpdate()
+            memberNames.remove(clientId)
+            partyMarkers.remove(clientId)?.let { marker ->
+                mapLibreMap?.removeMarker(marker)
+                Log.d("MapManager", "Removed marker for $clientId")
+            }
+            partyMarkerIcons.remove(clientId)
         }
     }
 
@@ -325,21 +432,38 @@ class MapManager(
      * 全パーティメンバーのマーカーを削除します。
      */
     fun clearMemberLocations() {
+        Log.d("MapManager", "clearMemberLocations: clearing ${partyMarkers.size} markers")
         runOnMainThread {
             memberLocations.clear()
-            applyPartyMarkersUpdate()
+            memberNames.clear()
+            partyMarkers.values.forEach { marker ->
+                mapLibreMap?.removeMarker(marker)
+            }
+            partyMarkers.clear()
+            partyMarkerIcons.clear()
         }
     }
 
-    private fun applyPartyMarkersUpdate() {
-        val features = memberLocations.map { (clientId, latLng) ->
-            val feature = Feature.fromGeometry(Point.fromLngLat(latLng.longitude, latLng.latitude))
-            val colorIndex = (Math.abs(clientId.hashCode()) % PARTY_MEMBER_COLORS.size)
-            feature.addStringProperty("iconImage", "$PARTY_ICON_PREFIX$colorIndex")
-            feature.addStringProperty("label", clientId)
-            feature
+    /**
+     * スタイル再読み込み時などに全パーティメンバーのマーカーを再配置します。
+     */
+    private fun reapplyAllPartyMarkers() {
+        val map = mapLibreMap ?: return
+        Log.d("MapManager", "reapplyAllPartyMarkers for ${memberLocations.size} members")
+        partyMarkers.values.forEach { map.removeMarker(it) }
+        partyMarkers.clear()
+
+        memberLocations.forEach { (clientId, latLng) ->
+            val name = memberNames[clientId] ?: context.getString(R.string.party_default_member_name)
+            val icon = getMemberIcon(clientId, name)
+            val marker = map.addMarker(
+                MarkerOptions()
+                    .position(latLng)
+                    .title(name)
+                    .icon(icon)
+            )
+            partyMarkers[clientId] = marker
         }
-        partyMarkerSource?.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
     /**
@@ -376,28 +500,37 @@ class MapManager(
         val point = Point.fromLngLat(currentLongitude, currentLatitude)
         val feature = Feature.fromGeometry(point)
         val featureCollection = FeatureCollection.fromFeature(feature)
-        val source = GeoJsonSource(SOURCE_ID, featureCollection)
 
-        loadedStyle.addSource(source)
-        val bitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
-        loadedStyle.addImage(ICON_ID, bitmap)
+        if (loadedStyle.getSource(SOURCE_ID) == null) {
+            val source = GeoJsonSource(SOURCE_ID, featureCollection)
+            loadedStyle.addSource(source)
+        } else {
+            (loadedStyle.getSourceAs(SOURCE_ID) as? GeoJsonSource)?.setGeoJson(featureCollection)
+        }
+        markerSource = loadedStyle.getSourceAs(SOURCE_ID)
 
-        val layer = SymbolLayer(LAYER_ID, SOURCE_ID).apply {
-            setProperties(
-                PropertyFactory.iconImage(ICON_ID),
-                PropertyFactory.iconSize(0.25f),
-                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                PropertyFactory.iconOffset(arrayOf(0f, 100f)),
-                PropertyFactory.visibility(Property.NONE)
-            )
+        if (loadedStyle.getImage(ICON_ID) == null) {
+            val bitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
+            if (bitmap != null) {
+                loadedStyle.addImage(ICON_ID, bitmap)
+            }
         }
 
-        loadedStyle.addLayer(layer)
-        markerSource = loadedStyle.getSourceAs(SOURCE_ID)
+        if (loadedStyle.getLayer(LAYER_ID) == null) {
+            val layer = SymbolLayer(LAYER_ID, SOURCE_ID).apply {
+                setProperties(
+                    PropertyFactory.iconImage(ICON_ID),
+                    PropertyFactory.iconSize(0.25f),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    PropertyFactory.iconOffset(arrayOf(0f, 100f)),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconIgnorePlacement(true),
+                    PropertyFactory.visibility(Property.NONE)
+                )
+            }
+            loadedStyle.addLayer(layer)
+        }
         markerLayer = loadedStyle.getLayerAs(LAYER_ID)
-
-        // パーティメンバーのマーカーもスタイル再読み込み時にセットアップ
-        setupPartyMarkers(loadedStyle)
 
         // すでに位置が更新されていた場合、マーカーを表示
         if (currentLatitude != 0.0 || currentLongitude != 0.0) {
@@ -417,9 +550,9 @@ class MapManager(
         mapView.getMapAsync { map ->
             mapLibreMap = map
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
-            map.setStyle(style)
-            map.getStyle { loadedStyle ->
+            map.setStyle(style) { loadedStyle ->
                 resetMarker(loadedStyle)
+                reapplyAllPartyMarkers()
             }
         }
         attributionTextView?.text = context.getString(R.string.attribution_osm)
@@ -428,9 +561,9 @@ class MapManager(
         mapView.getMapAsync { map ->
             mapLibreMap = map
             val style = Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
-            map.setStyle(style)
-            map.getStyle { loadedStyle ->
+            map.setStyle(style) { loadedStyle ->
                 resetMarker(loadedStyle)
+                reapplyAllPartyMarkers()
             }
         }
         attributionTextView?.text = context.getString(R.string.attribution_gsi)

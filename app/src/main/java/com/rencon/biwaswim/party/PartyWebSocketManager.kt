@@ -44,6 +44,8 @@ class PartyWebSocketManager {
         fun onMemberJoined(clientId: String) {}
         /** 誰か（自分を含む）がパーティから退室したとき */
         fun onMemberLeft(clientId: String) {}
+        /** パーティメンバーの名前が更新または通知されたとき */
+        fun onMemberNameUpdated(clientId: String, userName: String) {}
         /** パーティのメンバー一覧が更新されたとき */
         fun onMembersUpdated(clientIds: List<String>) {}
         /** 他のパーティメンバーの位置情報が更新されたとき */
@@ -51,8 +53,9 @@ class PartyWebSocketManager {
     }
 
     data object companion {
-        private val WEBSOCKET_SERVER_ORIGIN = "http://192.168.1.82:8787"
+        private val WEBSOCKET_SERVER_ORIGIN = "https://biwaswim-party.kiirokun1142.workers.dev"
         var APP_ID: String? = null
+        var USER_NAME: String? = null
         var wsConnection: WebSocket? = null
 
         /**
@@ -81,38 +84,85 @@ class PartyWebSocketManager {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         wsConnection = webSocket
                         Log.d("PartyWebSocketManager", "WebSocket opened: $response")
+                        // 接続確立時に自分のユーザー名を送信
+                        if (APP_ID != null && !USER_NAME.isNullOrBlank()) {
+                            webSocket.send("name,$APP_ID,$USER_NAME")
+                        }
                         callback?.onConnected()
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        Log.d("PartyWebSocketManager", "Received message: $text")
-                        // サーバーから "join:<clientId>" / "leave:<clientId>" / "location:<clientId>,<lat>,<lon>" 形式等で届く想定
+                        Log.d("PartyWebSocketManager", "Received raw WebSocket message: '$text'")
+                        // サーバーから "join:<clientId>" / "leave:<clientId>" / "name:<clientId>,<userName>" / "location:<clientId>,<lat>,<lon>,[<userName>]" 形式等で届く想定
                         when {
-                            text.startsWith("join,") -> {
-                                val clientId = text.removePrefix("join,").trim()
-                                callback?.onMemberJoined(clientId)
-                            }
-                            text.startsWith("leave,") -> {
-                                val clientId = text.removePrefix("leave,").trim()
-                                callback?.onMemberLeft(clientId)
-                            }
-                            text.startsWith("members,") -> {
-                                val clientIds = text.removePrefix("members,").replace("\"", "").replace("[", "").replace("]", "").split(",").map(String::trim).filter(String::isNotEmpty)
-
-                                callback?.onMembersUpdated(clientIds)
-                            }
-                            text.startsWith("location,") || text.startsWith("loc,") -> {
-                                val prefix = if (text.startsWith("location,")) "location," else "loc,"
+                            text.startsWith("name,") || text.startsWith("name:") || text.startsWith("user,") || text.startsWith("user:") -> {
+                                val prefix = when {
+                                    text.startsWith("name,") -> "name,"
+                                    text.startsWith("name:") -> "name:"
+                                    text.startsWith("user,") -> "user,"
+                                    else -> "user:"
+                                }
                                 val body = text.removePrefix(prefix)
                                 val parts = body.split(",").map(String::trim)
+                                if (parts.size >= 2) {
+                                    val clientId = parts[0]
+                                    val userName = parts[1]
+                                    if (clientId.isNotEmpty() && userName.isNotEmpty()) {
+                                        Log.d("PartyWebSocketManager", "Parsed member name: clientId=$clientId, userName=$userName")
+                                        callback?.onMemberNameUpdated(clientId, userName)
+                                    }
+                                }
+                            }
+                            text.startsWith("join,") || text.startsWith("join:") -> {
+                                val prefix = if (text.startsWith("join,")) "join," else "join:"
+                                val clientId = text.removePrefix(prefix).trim()
+                                Log.d("PartyWebSocketManager", "Parsed member joined: $clientId")
+                                callback?.onMemberJoined(clientId)
+                            }
+                            text.startsWith("leave,") || text.startsWith("leave:") -> {
+                                val prefix = if (text.startsWith("leave,")) "leave," else "leave:"
+                                val clientId = text.removePrefix(prefix).trim()
+                                Log.d("PartyWebSocketManager", "Parsed member left: $clientId")
+                                callback?.onMemberLeft(clientId)
+                            }
+                            text.startsWith("members,") || text.startsWith("members:") -> {
+                                val prefix = if (text.startsWith("members,")) "members," else "members:"
+                                val clientIds = text.removePrefix(prefix).replace("\"", "").replace("[", "").replace("]", "").split(",").map(String::trim).filter(String::isNotEmpty)
+                                Log.d("PartyWebSocketManager", "Parsed members list: $clientIds")
+                                callback?.onMembersUpdated(clientIds)
+                            }
+                            text.startsWith("location,") || text.startsWith("location:") || text.startsWith("loc,") || text.startsWith("loc:") -> {
+                                val prefix = when {
+                                    text.startsWith("location,") -> "location,"
+                                    text.startsWith("location:") -> "location:"
+                                    text.startsWith("loc,") -> "loc,"
+                                    else -> "loc:"
+                                }
+                                val body = text.removePrefix(prefix)
+                                val parts = body.split(",").map(String::trim)
+                                Log.d("PartyWebSocketManager", "Parsed location message body='$body', parts=$parts")
                                 if (parts.size >= 3) {
                                     val clientId = parts[0]
                                     val lat = parts[1].toDoubleOrNull()
                                     val lon = parts[2].toDoubleOrNull()
+                                    if (parts.size >= 4) {
+                                        val userName = parts[3]
+                                        if (userName.isNotEmpty()) {
+                                            callback?.onMemberNameUpdated(clientId, userName)
+                                        }
+                                    }
+                                    Log.d("PartyWebSocketManager", "Triggering onMemberLocationUpdated: clientId=$clientId, lat=$lat, lon=$lon")
                                     if (lat != null && lon != null) {
                                         callback?.onMemberLocationUpdated(clientId, lat, lon)
+                                    } else {
+                                        Log.w("PartyWebSocketManager", "Failed to parse lat/lon numbers from: $parts")
                                     }
+                                } else {
+                                    Log.w("PartyWebSocketManager", "Location message has insufficient parts (< 3): $parts")
                                 }
+                            }
+                            else -> {
+                                Log.d("PartyWebSocketManager", "Received other/unrecognized message: $text")
                             }
                         }
                     }
@@ -151,18 +201,46 @@ class PartyWebSocketManager {
         }
 
         /**
+         * 自分のユーザー名を WebSocket 経由でパーティメンバーに送信する。
+         * 送信フォーマット: name,<clientId>,<userName>
+         */
+        fun sendUserName(userName: String): Boolean {
+            USER_NAME = userName
+            val clientId = APP_ID
+            if (clientId == null) {
+                Log.w("PartyWebSocketManager", "sendUserName failed: APP_ID is null")
+                return false
+            }
+            val ws = wsConnection
+            if (ws == null) {
+                Log.d("PartyWebSocketManager", "sendUserName: wsConnection is null (not connected yet)")
+                return false
+            }
+            val message = "name,$clientId,$userName"
+            val success = ws.send(message)
+            Log.d("PartyWebSocketManager", "sendUserName -> '$message', success=$success")
+            return success
+        }
+
+        /**
          * 現在位置を WebSocket 経由でパーティメンバーに送信する。
-         * 送信フォーマット: location,<clientId>,<latitude>,<longitude>
+         * 送信フォーマット: location,<clientId>,<latitude>,<longitude>,<userName>
          */
         fun sendLocation(latitude: Double, longitude: Double): Boolean {
-            val clientId = APP_ID ?: return false
-            val message = "location,$clientId,$latitude,$longitude"
-            val success = wsConnection?.send(message) ?: false
-            if (success) {
-                Log.d("PartyWebSocketManager", "Sent location successfully: $message")
-            } else {
-                Log.w("PartyWebSocketManager", "Failed to send location (wsConnection is null or closed)")
+            val clientId = APP_ID
+            if (clientId == null) {
+                Log.w("PartyWebSocketManager", "sendLocation failed: APP_ID is null")
+                return false
             }
+            val ws = wsConnection
+            if (ws == null) {
+                Log.w("PartyWebSocketManager", "sendLocation failed: wsConnection is null (not joined in party)")
+                return false
+            }
+            val name = USER_NAME ?: ""
+            val message = "location,$clientId,$latitude,$longitude,$name"
+            val success = ws.send(message)
+            Log.d("PartyWebSocketManager", "sendLocation -> '$message', success=$success")
             return success
         }
 

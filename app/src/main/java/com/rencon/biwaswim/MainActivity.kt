@@ -129,6 +129,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             lastNoFixTime = 0L
         }
     }
+
     private enum class HealthStatus {
         HEALTHY,           // 正常に測位中
         WAITING_DATA,      // 接続直後（データ待機中）
@@ -175,6 +176,92 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     lateinit var leavePartyButton: Button
     private lateinit var partyMemberTextView: TextView
     private val partyMembers = linkedSetOf<String>()
+    private val partyMemberNames = mutableMapOf<String, String>()
+
+    private fun getMyUserName(): String {
+        val prefs = getSharedPreferences("app_data", Context.MODE_PRIVATE)
+        return prefs.getString("user_name", null)?.takeIf { it.isNotBlank() }
+            ?: getString(R.string.party_default_member_name)
+    }
+
+    private fun isUserNameRegistered(): Boolean {
+        val prefs = getSharedPreferences("app_data", Context.MODE_PRIVATE)
+        return !prefs.getString("user_name", null).isNullOrBlank()
+    }
+
+    private fun ensureUserNameRegistered(
+        title: String = getString(R.string.set_username),
+        positiveButtonText: String = getString(R.string.ok),
+        onDone: () -> Unit,
+        onCancel: (() -> Unit)? = null
+    ) {
+        if (isUserNameRegistered()) {
+            onDone()
+        } else {
+            showUserNameRegistrationDialog(
+                title = title,
+                positiveButtonText = positiveButtonText,
+                onDone = onDone,
+                onCancel = onCancel
+            )
+        }
+    }
+
+    private fun showUserNameRegistrationDialog(
+        title: String = getString(R.string.set_username),
+        positiveButtonText: String = getString(R.string.ok),
+        onDone: (() -> Unit)? = null,
+        onCancel: (() -> Unit)? = null
+    ) {
+        val currentName = getMyUserName().let {
+            if (it == getString(R.string.party_default_member_name)) "" else it
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, (8 * resources.displayMetrics.density).toInt(), pad, 0)
+        }
+
+        val input = android.widget.EditText(this).apply {
+            hint = getString(R.string.username_hint)
+            setText(currentName)
+            setSelection(text.length)
+            isSingleLine = true
+        }
+        container.addView(input)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(getString(R.string.username_dialog_message))
+            .setView(container)
+            .setPositiveButton(positiveButtonText) { _, _ ->
+                val newName = input.text.toString().trim()
+                val finalName =
+                    if (newName.isNotBlank()) newName else currentName.ifBlank { "ユーザー" }
+                val prefs = getSharedPreferences("app_data", Context.MODE_PRIVATE)
+                prefs.edit {
+                    putString("user_name", finalName)
+                }
+                PartyWebSocketManager.companion.USER_NAME = finalName
+                val selfId = PartyWebSocketManager.companion.APP_ID
+                if (!selfId.isNullOrEmpty()) {
+                    partyMemberNames[selfId] = finalName
+                }
+                PartyWebSocketManager.companion.sendUserName(finalName)
+                updatePartyMembersUI()
+                onDone?.invoke()
+            }
+            .setNegativeButton(getString(R.string.cancel)) { _, _ ->
+                onCancel?.invoke()
+            }
+            .setOnCancelListener {
+                onCancel?.invoke()
+            }
+            .create()
+
+        dialog.show()
+    }
 
     // --- 遊泳トラッキング状態 ---
     private var isSwimmingActive: Boolean = false
@@ -204,13 +291,27 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private fun startPartyLocationSender() {
         partyLocationSenderJob?.cancel()
         partyLocationSenderJob = lifecycleScope.launch {
+            Log.d(TAG, "Party location sender loop started")
             while (isActive) {
                 delay(5000L)
-                if (isReceiverConnected() && PartyWebSocketManager.companion.wsConnection != null) {
-                    val lat = lastKnownLatitude
-                    val lon = lastKnownLongitude
+                val receiverConnected = isReceiverConnected()
+                val wsConn = PartyWebSocketManager.companion.wsConnection
+                val lat = lastKnownLatitude
+                val lon = lastKnownLongitude
+                /*
+                Log.d(
+                    TAG,
+                    "Party location sender tick: isReceiverConnected=$receiverConnected, wsConnected=${wsConn != null}, lat=$lat, lon=$lon"
+                )*/
+                if (receiverConnected && wsConn != null) {
                     if (lat != null && lon != null && (lat != 0.0 || lon != 0.0)) {
-                        PartyWebSocketManager.companion.sendLocation(lat, lon)
+                        val sent = PartyWebSocketManager.companion.sendLocation(lat, lon)
+                        Log.d(
+                            TAG,
+                            "Party location broadcast result: success=$sent, lat=$lat, lon=$lon"
+                        )
+                    } else {
+                        Log.w(TAG, "Party location sender: lat/lon is null or 0.0 ($lat, $lon)")
                     }
                 }
             }
@@ -349,13 +450,15 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             permissionLauncher.launch(permissions.toTypedArray())
         }
     }
+
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
             openQrScanner()
         } else {
-            Snackbar.make(mainView, getString(R.string.needed_permission), Snackbar.LENGTH_LONG).show()
+            Snackbar.make(mainView, getString(R.string.needed_permission), Snackbar.LENGTH_LONG)
+                .show()
         }
     }
 
@@ -405,13 +508,19 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             } else {
                 val selfId = PartyWebSocketManager.companion.APP_ID
                 val memberLines = partyMembers.map { memberId ->
+                    val isSelf = memberId == selfId
+                    val displayName = if (isSelf) {
+                        getMyUserName()
+                    } else {
+                        partyMemberNames[memberId] ?: getString(R.string.party_default_member_name)
+                    }
                     val roleLabel = when {
                         memberId == selfId && memberId == hostAppId -> " (${getString(R.string.party_role_host_you)})"
                         memberId == hostAppId -> " (${getString(R.string.party_role_host)})"
                         memberId == selfId -> " (${getString(R.string.party_role_you)})"
                         else -> ""
                     }
-                    "• $memberId$roleLabel"
+                    "• $displayName$roleLabel"
                 }.joinToString("\n")
 
                 val header = getString(R.string.party_members_header, partyMembers.size)
@@ -433,22 +542,30 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                     val selfId = PartyWebSocketManager.companion.APP_ID
                     if (!selfId.isNullOrEmpty()) {
                         partyMembers.add(selfId)
+                        partyMemberNames[selfId] = getMyUserName()
                     }
                     if (!hostAppId.isNullOrEmpty()) {
                         partyMembers.add(hostAppId!!)
                     }
+                    PartyWebSocketManager.companion.sendUserName(getMyUserName())
                     updatePartyMembersUI()
                 }
             }
 
             override fun onError(message: String) {
+                Log.d(TAG, "Party connection error: $message")
                 runOnUiThread {
                     partyMembers.clear()
+                    partyMemberNames.clear()
                     updatePartyMembersUI()
                     mapManager.clearMemberLocations()
                     resetPartyButtons()
-                    val title = if (isCreator) getString(R.string.error_create_party_title) else getString(R.string.error_join_party_title)
-                    val msg = if (isCreator) getString(R.string.error_create_party_message, message) else getString(R.string.error_join_party_message, message)
+                    val title =
+                        if (isCreator) getString(R.string.error_create_party_title) else getString(R.string.error_join_party_title)
+                    val msg =
+                        if (isCreator) getString(R.string.error_create_party_message) else getString(
+                            R.string.error_join_party_message
+                        )
                     AlertDialog.Builder(this@MainActivity)
                         .setTitle(title)
                         .setMessage(msg)
@@ -460,40 +577,63 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             override fun onClosed() {
                 runOnUiThread {
                     partyMembers.clear()
+                    partyMemberNames.clear()
                     updatePartyMembersUI()
                     mapManager.clearMemberLocations()
                     resetPartyButtons()
-                    Snackbar.make(mainView, getString(R.string.party_disconnected), Snackbar.LENGTH_LONG).show()
+                    Snackbar.make(
+                        mainView,
+                        getString(R.string.party_disconnected),
+                        Snackbar.LENGTH_LONG
+                    ).show()
                 }
             }
 
             override fun onMemberJoined(clientId: String) {
                 val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
+                val displayName = if (isSelf) getMyUserName() else (partyMemberNames[clientId]
+                    ?: getString(R.string.party_default_member_name))
                 val msg = if (isSelf) {
                     getString(R.string.party_you_joined)
                 } else {
-                    getString(R.string.party_member_joined, clientId)
+                    getString(R.string.party_member_joined, displayName)
                 }
                 runOnUiThread {
                     partyMembers.add(clientId)
+                    if (isSelf) {
+                        partyMemberNames[clientId] = getMyUserName()
+                    }
+                    updatePartyMembersUI()
+                    Snackbar.make(mainView, msg, Snackbar.LENGTH_SHORT).show()
+                }
+                PartyWebSocketManager.companion.sendUserName(getMyUserName())
+            }
+
+            override fun onMemberLeft(clientId: String) {
+                val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
+                val displayName = if (isSelf) getMyUserName() else (partyMemberNames[clientId]
+                    ?: getString(R.string.party_default_member_name))
+                val msg = if (isSelf) {
+                    getString(R.string.party_you_left)
+                } else {
+                    getString(R.string.party_member_left, displayName)
+                }
+                runOnUiThread {
+                    partyMembers.remove(clientId)
+                    partyMemberNames.remove(clientId)
+                    mapManager.removeMemberLocation(clientId)
                     updatePartyMembersUI()
                     Snackbar.make(mainView, msg, Snackbar.LENGTH_SHORT).show()
                 }
             }
 
-            override fun onMemberLeft(clientId: String) {
-                val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
-                val msg = if (isSelf) {
-                    getString(R.string.party_you_left)
-                } else {
-                    getString(R.string.party_member_left, clientId)
-                }
+            override fun onMemberNameUpdated(clientId: String, userName: String) {
+                Log.d(TAG, "onMemberNameUpdated callback: clientId=$clientId, userName=$userName")
                 runOnUiThread {
-                    partyMembers.remove(clientId)
-                    mapManager.removeMemberLocation(clientId)
+                    partyMemberNames[clientId] = userName
                     updatePartyMembersUI()
-                    Snackbar.make(mainView, msg, Snackbar.LENGTH_SHORT).show()
                 }
+                mapManager.updateMemberName(clientId, userName)
             }
 
             override fun onMembersUpdated(clientIds: List<String>) {
@@ -502,11 +642,13 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                     val removedMembers = partyMembers.filter { it !in clientIds }
                     for (removed in removedMembers) {
                         mapManager.removeMemberLocation(removed)
+                        partyMemberNames.remove(removed)
                     }
                     partyMembers.clear()
                     partyMembers.addAll(clientIds)
                     updatePartyMembersUI()
                 }
+                PartyWebSocketManager.companion.sendUserName(getMyUserName())
             }
 
             override fun onMemberLocationUpdated(
@@ -514,9 +656,21 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 latitude: Double,
                 longitude: Double
             ) {
-                val isSelf = clientId == PartyWebSocketManager.companion.APP_ID
+                val selfId = PartyWebSocketManager.companion.APP_ID
+                val isSelf = clientId == selfId
+                Log.d(
+                    TAG,
+                    "onMemberLocationUpdated callback received: clientId=$clientId, selfId=$selfId, isSelf=$isSelf, lat=$latitude, lon=$longitude"
+                )
                 if (!isSelf) {
-                    mapManager.updateMemberLocation(clientId, latitude, longitude)
+                    val displayName = partyMemberNames[clientId]
+                    runOnUiThread {
+                        if (!partyMembers.contains(clientId)) {
+                            partyMembers.add(clientId)
+                            updatePartyMembersUI()
+                        }
+                    }
+                    mapManager.updateMemberLocation(clientId, latitude, longitude, displayName)
                 }
             }
         }
@@ -525,31 +679,43 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private fun invitedFromLink(url: String) {
         try {
             val uri = Uri.parse(url)
-            val parsedHostAppId = uri.getQueryParameter("hostAppId") ?: uri.getQueryParameter("hostClientId")
+            val parsedHostAppId =
+                uri.getQueryParameter("hostAppId") ?: uri.getQueryParameter("hostClientId")
             val parsedPartyId = uri.getQueryParameter("partyId") ?: uri.getQueryParameter("roomId")
 
             if (!parsedHostAppId.isNullOrEmpty() && !parsedPartyId.isNullOrEmpty()) {
-                hostAppId = parsedHostAppId
-                partyId = parsedPartyId
-                partyMembers.clear()
-                updatePartyMembersUI()
-                // 接続中はボタンを無効化して二重タップを防止する
-                joinPartyButton.isEnabled = false
-                createPartyButton.isEnabled = false
-                lifecycleScope.launch {
-                    PartyWebSocketManager.companion.join(
-                        partyId,
-                        hostAppId!!,
-                        callback = createPartyConnectionCallback(isCreator = false)
-                    )
-                }
+                ensureUserNameRegistered(
+                    title = getString(R.string.join_party),
+                    positiveButtonText = getString(R.string.join_party),
+                    onDone = {
+                        hostAppId = parsedHostAppId
+                        partyId = parsedPartyId
+                        partyMembers.clear()
+                        partyMemberNames.clear()
+                        updatePartyMembersUI()
+                        // 接続中はボタンを無効化して二重タップを防止する
+                        joinPartyButton.isEnabled = false
+                        createPartyButton.isEnabled = false
+                        lifecycleScope.launch {
+                            PartyWebSocketManager.companion.join(
+                                partyId,
+                                hostAppId!!,
+                                callback = createPartyConnectionCallback(isCreator = false)
+                            )
+                        }
+                    },
+                    onCancel = {
+                        resetPartyButtons()
+                    }
+                )
             } else {
                 Snackbar.make(mainView, getString(R.string.error_join_party), Snackbar.LENGTH_LONG)
                     .show()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse invite link/QR: $url", e)
-            Snackbar.make(mainView, getString(R.string.error_join_party), Snackbar.LENGTH_LONG).show()
+            Snackbar.make(mainView, getString(R.string.error_join_party), Snackbar.LENGTH_LONG)
+                .show()
         }
     }
 
@@ -614,7 +780,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         openMenuButton.setOnClickListener { showSideMenu() }
 
         sideMenuGroup.post {
-            sideMenuGroup.translationX = -sideMenuContainer.width.toFloat() -30f
+            sideMenuGroup.translationX = -sideMenuContainer.width.toFloat() - 30f
         }
 
         jumpToMarkerButton = findViewById(R.id.jumpToMarker)
@@ -638,34 +804,51 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             }
         }
         createPartyButton.setOnClickListener {
-            // 接続中はボタンを無効化して二重タップを防止する
-            joinPartyButton.isEnabled = false
-            createPartyButton.isEnabled = false
-            hostAppId = PartyWebSocketManager.companion.APP_ID ?: ""
-            partyMembers.clear()
-            updatePartyMembersUI()
-            lifecycleScope.launch {
-                try {
-                    val createdPartyId: String = PartyWebSocketManager.companion.create()
-                    partyId = createdPartyId
-                    join(
-                        partyId,
-                        hostAppId!!,
-                        callback = createPartyConnectionCallback(isCreator = true)
-                    )
-                } catch (e: Exception) {
-                    // create() 自体が失敗した場合（ネットワークエラーなど）
-                    Log.e(TAG, "Failed to create party: ${e.message}", e)
-                    runOnUiThread {
-                        resetPartyButtons()
-                        AlertDialog.Builder(this@MainActivity)
-                            .setTitle(getString(R.string.error_create_party_title))
-                            .setMessage(getString(R.string.error_create_party_message, e.localizedMessage ?: "不明なエラー"))
-                            .setPositiveButton(getString(R.string.close), null)
-                            .show()
+            ensureUserNameRegistered(
+                title = getString(R.string.create_party),
+                positiveButtonText = getString(R.string.create_party),
+                onDone = {
+                    // 接続中はボタンを無効化して二重タップを防止する
+                    joinPartyButton.isEnabled = false
+                    createPartyButton.isEnabled = false
+                    hostAppId = PartyWebSocketManager.companion.APP_ID ?: ""
+                    partyMembers.clear()
+                    partyMemberNames.clear()
+                    updatePartyMembersUI()
+                    lifecycleScope.launch {
+                        try {
+                            val createdPartyId: String = PartyWebSocketManager.companion.create()
+                            partyId = createdPartyId
+                            join(
+                                partyId,
+                                hostAppId!!,
+                                callback = createPartyConnectionCallback(isCreator = true)
+                            )
+                        } catch (e: Exception) {
+                            // create() 自体が失敗した場合（ネットワークエラーなど）
+                            Log.e(TAG, "Failed to create party: ${e.message}", e)
+                            val message = e.message
+                            runOnUiThread {
+                                resetPartyButtons()
+                                var msg = getString(R.string.error_create_party_message)
+                                if (message.toString().startsWith("failed to connect to")) {
+                                    msg += getString(R.string.error_failed_to_connect)
+                                } else {
+                                    msg += getString(R.string.error_unknown_message)
+                                }
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle(getString(R.string.error_create_party_title))
+                                    .setMessage(msg)
+                                    .setPositiveButton(getString(R.string.close), null)
+                                    .show()
+                            }
+                        }
                     }
+                },
+                onCancel = {
+                    resetPartyButtons()
                 }
-            }
+            )
         }
 
         invitePartyButton.setOnClickListener {
@@ -685,6 +868,12 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         }
         PartyWebSocketManager.companion.APP_ID = id
 
+        val savedUserName = prefs.getString("user_name", null)
+        if (!savedUserName.isNullOrBlank()) {
+            PartyWebSocketManager.companion.USER_NAME = savedUserName
+            partyMemberNames[id] = savedUserName
+        }
+
         val uri = intent.data
         if (uri != null) {
             invitedFromLink(uri.toString())
@@ -693,13 +882,15 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         leavePartyButton.setOnClickListener {
             hostAppId = ""
             partyMembers.clear()
+            partyMemberNames.clear()
             updatePartyMembersUI()
             mapManager.clearMemberLocations()
             lifecycleScope.launch {
                 PartyWebSocketManager.companion.leave()
             }
             resetPartyButtons()
-            Snackbar.make(mainView, getString(R.string.party_you_left), Snackbar.LENGTH_SHORT).show()
+            Snackbar.make(mainView, getString(R.string.party_you_left), Snackbar.LENGTH_SHORT)
+                .show()
         }
         weatherWarningChannel = NotificationChannel(
             "weatherWarning",
@@ -756,7 +947,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private fun ConnectionHealth.evaluateStatus(now: Long): HealthStatus {
         if (!isConnected) return HealthStatus.TIMEOUT
 
-        val hasRecentValidLocation = (lastValidLocationTime > 0 && now - lastValidLocationTime < DATA_TIMEOUT_MS)
+        val hasRecentValidLocation =
+            (lastValidLocationTime > 0 && now - lastValidLocationTime < DATA_TIMEOUT_MS)
 
         // 1. 直近でエラーが発生している場合（まだ正常な位置情報が得られていない場合）
         if (lastChecksumErrorTime > 0 && now - lastChecksumErrorTime < ERROR_HOLD_MS && !hasRecentValidLocation) {
@@ -788,14 +980,71 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         // 4. データは届いているが衛星未捕捉 (No Fix)
         return HealthStatus.NO_FIX
     }
-    private fun showSettings(){
+
+    private fun showSettings() {
+        val padH = (24 * resources.displayMetrics.density).toInt()
+        val padV = (16 * resources.displayMetrics.density).toInt()
+
         val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padH, padV, padH, padV)
+        }
+
+        // --- ユーザー名設定セクション ---
+        val userNameSectionTitle = TextView(this).apply {
+            text = getString(R.string.username)
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, (6 * resources.displayMetrics.density).toInt())
+        }
+        layout.addView(userNameSectionTitle)
+
+        val userNameRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (20 * resources.displayMetrics.density).toInt())
+        }
+
+        val userNameDisplay = TextView(this).apply {
+            text = getMyUserName()
+            textSize = 17f
+            setTextColor(Color.DKGRAY)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        userNameRow.addView(userNameDisplay)
+
+        val changeUserNameButton = MaterialButton(this).apply {
+            text = getString(R.string.change)
+            setOnClickListener {
+                showUserNameRegistrationDialog(
+                    title = getString(R.string.change_username),
+                    positiveButtonText = getString(R.string.save),
+                    onDone = {
+                        userNameDisplay.text = getMyUserName()
+                    }
+                )
+            }
+        }
+        userNameRow.addView(changeUserNameButton)
+        layout.addView(userNameRow)
+
+        // --- マップスタイルセクション ---
+        val mapStyleSectionTitle = TextView(this).apply {
+            text = getString(R.string.map_style)
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, (6 * resources.displayMetrics.density).toInt())
+        }
+        layout.addView(mapStyleSectionTitle)
+
+        val mapStyleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-        layout.setPadding(16, 16, 16, 16)
 
-        val options = listOf(getString(R.string.map_default), getString(R.string.map_aerial_photograph))
-
+        val options =
+            listOf(getString(R.string.map_default), getString(R.string.map_aerial_photograph))
         var selectedButton: Button? = null
 
         options.forEach { text ->
@@ -803,9 +1052,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 this.text = text
 
                 setOnClickListener {
-                    selectedButton?.setBackgroundColor(
-                        Color.LTGRAY
-                    )
+                    selectedButton?.setBackgroundColor(Color.LTGRAY)
                     if (this.text == getString(R.string.map_default)) {
                         mapManager.changeStyleToOSM(context)
                         mapManager.nowMapStyleType = "OSM"
@@ -815,24 +1062,22 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         mapManager.nowMapStyleType = "GSI"
                     }
 
-                    setBackgroundColor(
-                        Color.YELLOW
-                    )
+                    setBackgroundColor(Color.YELLOW)
                     selectedButton = this
                 }
             }
             if (text == getString(R.string.map_default) && mapManager.nowMapStyleType == "OSM") {
                 selectedButton = button
                 button.setBackgroundColor(Color.YELLOW)
-            }else if (text == getString(R.string.map_aerial_photograph) && mapManager.nowMapStyleType == "GSI") {
+            } else if (text == getString(R.string.map_aerial_photograph) && mapManager.nowMapStyleType == "GSI") {
                 selectedButton = button
                 button.setBackgroundColor(Color.YELLOW)
-            }else{
+            } else {
                 button.setBackgroundColor(Color.LTGRAY)
             }
             button.setTextColor(Color.BLACK)
 
-            layout.addView(
+            mapStyleRow.addView(
                 button,
                 LinearLayout.LayoutParams(
                     0,
@@ -841,15 +1086,15 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 )
             )
         }
-
+        layout.addView(mapStyleRow)
 
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.settings))
             .setView(layout)
-            .setPositiveButton(getString(R.string.close)) { _, _ ->
-            }
+            .setPositiveButton(getString(R.string.close), null)
             .show()
     }
+
     private fun showSideMenu() {
         val targetX = if (!isMenuOpen) {
             0f
@@ -1047,11 +1292,18 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         if (inWater) {
                             color = when {
                                 distance < 20.0 -> Color.GREEN
-                                distance < FAR_SHORE_THRESHOLD_METERS -> Color.rgb(255, 165, 0) // オレンジ
+                                distance < FAR_SHORE_THRESHOLD_METERS -> Color.rgb(
+                                    255,
+                                    165,
+                                    0
+                                ) // オレンジ
                                 else -> Color.RED
                             }
                         }
-                        (overlayDrawable.mutate() as? GradientDrawable)?.setStroke(STROKE_WIDTH, color)
+                        (overlayDrawable.mutate() as? GradientDrawable)?.setStroke(
+                            STROKE_WIDTH,
+                            color
+                        )
 
                         // 岸から30m離れたときの警告（通知＋20秒周期のはっきりとした振動）
                         if (inWater && distance >= FAR_SHORE_THRESHOLD_METERS) {
@@ -1062,17 +1314,27 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                     }
                 }
             }
+
             is NmeaParseDetail.NoFix -> {
                 health.lastNoFixTime = now
             }
+
             is NmeaParseDetail.InvalidChecksum -> {
                 health.lastChecksumErrorTime = now
-                Log.w(TAG, "NMEA Checksum error (${if (isUsb) "USB" else "BT"}): ${detail.rawSentence}")
+                Log.w(
+                    TAG,
+                    "NMEA Checksum error (${if (isUsb) "USB" else "BT"}): ${detail.rawSentence}"
+                )
             }
+
             is NmeaParseDetail.Malformed -> {
                 health.lastMalformedTime = now
-                Log.w(TAG, "NMEA Malformed sentence (${if (isUsb) "USB" else "BT"}): ${detail.rawSentence}")
+                Log.w(
+                    TAG,
+                    "NMEA Malformed sentence (${if (isUsb) "USB" else "BT"}): ${detail.rawSentence}"
+                )
             }
+
             is NmeaParseDetail.Unsupported -> {
                 // GSV, GSA などの補助センテンス（正常ストリームの一部）
             }
@@ -1200,7 +1462,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 dev.rssi > -100 -> "弱"
                 else -> "未測定"
             }
-            val rssiText = if (dev.rssi > -100) "${dev.rssi} dBm ($signalStrength)" else "ペアリング済"
+            val rssiText =
+                if (dev.rssi > -100) "${dev.rssi} dBm ($signalStrength)" else "ペアリング済"
             "${dev.name}\n${dev.address}  [$rssiText]"
         }.toTypedArray()
 
@@ -1247,7 +1510,12 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             if (!::connectionStatus.isInitialized) return@runOnUiThread
 
             if (!isUsbConnected && !isBtConnected) {
-                connectionStatus.setBackgroundColor(ContextCompat.getColor(this, R.color.disconnected))
+                connectionStatus.setBackgroundColor(
+                    ContextCompat.getColor(
+                        this,
+                        R.color.disconnected
+                    )
+                )
                 connectionStatus.text = getString(R.string.disconnected)
                 return@runOnUiThread
             }
@@ -1272,9 +1540,14 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         "$usbText | $btText"
                     }
                 }
+
                 isUsbConnected -> {
-                    formatSourceStatus(getString(R.string.connected_usb), usbStatus ?: HealthStatus.TIMEOUT)
+                    formatSourceStatus(
+                        getString(R.string.connected_usb),
+                        usbStatus ?: HealthStatus.TIMEOUT
+                    )
                 }
+
                 isBtConnected -> {
                     val baseName = if (connectedBluetoothDeviceName != null) {
                         getString(R.string.connected_bluetooth, connectedBluetoothDeviceName)
@@ -1283,6 +1556,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                     }
                     formatSourceStatus(baseName, btStatus ?: HealthStatus.TIMEOUT)
                 }
+
                 else -> getString(R.string.disconnected)
             }
             connectionStatus.text = statusText
@@ -1415,6 +1689,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         super.onSaveInstanceState(outState)
         mapManager.onSaveInstanceState(outState)
     }
+
     fun generateRandomString(length: Int = 16): String {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         val random = SecureRandom()
@@ -1425,6 +1700,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             }
         }
     }
+
     fun generateQRCode(text: String, width: Int, height: Int): Bitmap? {
         return try {
             val bitMatrix: BitMatrix = MultiFormatWriter().encode(
@@ -1452,8 +1728,9 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         val point = Point()
         display.getSize(point)
         val bitmapSize = (point.x * 0.6).toInt()
-        val shareButtonSize = (point.x *0.8).toInt()
-        val shareUrl = "https://orenzikun722.github.io/biwaswim-page/invite.html?partyId=$partyId&hostAppId=$hostAppId"
+        val shareButtonSize = (point.x * 0.8).toInt()
+        val shareUrl =
+            "https://orenzikun722.github.io/biwaswim-page/invite.html?partyId=$partyId&hostAppId=$hostAppId"
         val bitmap = generateQRCode(shareUrl, bitmapSize, bitmapSize)
 
 
@@ -1527,6 +1804,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
         dialog.show()
     }
+
     fun startCamera(
         context: Context,
         lifecycleOwner: LifecycleOwner,
