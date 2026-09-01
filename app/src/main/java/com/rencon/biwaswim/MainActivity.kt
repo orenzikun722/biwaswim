@@ -533,7 +533,10 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     /** パーティ接続コールバックの生成 */
     private fun createPartyConnectionCallback(isCreator: Boolean = false): PartyConnectionCallback {
         return object : PartyConnectionCallback {
+            private var isConnected = false
+
             override fun onConnected() {
+                isConnected = true
                 runOnUiThread {
                     showPartyButtons()
                     if (isCreator) {
@@ -560,17 +563,25 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                     updatePartyMembersUI()
                     mapManager.clearMemberLocations()
                     resetPartyButtons()
-                    val title =
-                        if (isCreator) getString(R.string.error_create_party_title) else getString(R.string.error_join_party_title)
-                    val msg =
-                        if (isCreator) getString(R.string.error_create_party_message) else getString(
-                            R.string.error_join_party_message
-                        )
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle(title)
-                        .setMessage(msg)
-                        .setPositiveButton(getString(R.string.close), null)
-                        .show()
+                    if (isConnected) {
+                        Snackbar.make(
+                            mainView,
+                            getString(R.string.party_disconnected),
+                            Snackbar.LENGTH_LONG
+                        ).show()
+                    } else {
+                        val title =
+                            if (isCreator) getString(R.string.error_create_party_title) else getString(R.string.error_join_party_title)
+                        val msg =
+                            if (isCreator) getString(R.string.error_create_party_message) else getString(
+                                R.string.error_join_party_message
+                            )
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle(title)
+                            .setMessage(msg)
+                            .setPositiveButton(getString(R.string.close), null)
+                            .show()
+                    }
                 }
             }
 

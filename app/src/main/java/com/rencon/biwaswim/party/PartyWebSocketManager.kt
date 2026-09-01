@@ -13,7 +13,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.io.EOFException
 import java.net.SocketTimeoutException
+import java.util.concurrent.TimeUnit
 
 
 class PartyWebSocketManager {
@@ -53,10 +55,16 @@ class PartyWebSocketManager {
     }
 
     data object companion {
-        private val WEBSOCKET_SERVER_ORIGIN = "https://biwaswim-party.kiirokun1142.workers.dev"
+        private const val WEBSOCKET_SERVER_ORIGIN = "https://biwaswim-party.kiirokun1142.workers.dev"
         var APP_ID: String? = null
         var USER_NAME: String? = null
         var wsConnection: WebSocket? = null
+        private var isManualClosing = false
+
+        private val okHttpClient = OkHttpClient.Builder()
+            .pingInterval(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
 
         /**
          * 指定した roomId のパーティに WebSocket で参加する。
@@ -68,7 +76,7 @@ class PartyWebSocketManager {
             callback: PartyConnectionCallback? = null
         ) {
             withContext(Dispatchers.IO) {
-                val client = OkHttpClient()
+                isManualClosing = false
 
                 val request = Request.Builder()
                     .url(
@@ -177,6 +185,7 @@ class PartyWebSocketManager {
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                         Log.d("PartyWebSocketManager", "WebSocket closed: $code / $reason")
                         wsConnection = null
+                        callback?.onClosed()
                     }
 
                     override fun onFailure(
@@ -187,6 +196,16 @@ class PartyWebSocketManager {
                         Log.e("PartyWebSocketManager", "WebSocket failure: $t")
                         t.printStackTrace()
                         wsConnection = null
+                        if (isManualClosing) {
+                            isManualClosing = false
+                            callback?.onClosed()
+                            return
+                        }
+                        if (t is EOFException) {
+                            Log.w("PartyWebSocketManager", "WebSocket EOFException (connection closed by server / idle disconnect)")
+                            callback?.onClosed()
+                            return
+                        }
                         val message = when (t) {
                             is SocketTimeoutException -> "接続がタイムアウトしました"
                             is java.net.ConnectException -> "サーバーに接続できませんでした"
@@ -196,7 +215,7 @@ class PartyWebSocketManager {
                     }
                 }
 
-                client.newWebSocket(request, listener)
+                okHttpClient.newWebSocket(request, listener)
             }
         }
 
@@ -246,7 +265,8 @@ class PartyWebSocketManager {
 
         suspend fun leave() {
             withContext(Dispatchers.IO) {
-                wsConnection?.close(1000, null)
+                isManualClosing = true
+                wsConnection?.close(1000, "User left")
                 wsConnection = null
             }
         }
@@ -269,10 +289,8 @@ class PartyWebSocketManager {
                     .post(body)
                     .build()
 
-                val client = OkHttpClient()
-
                 // execute() で同期実行し、レスポンスを正しく取得する
-                val response = client.newCall(request).execute()
+                val response = okHttpClient.newCall(request).execute()
                 response.use {
                     if (!it.isSuccessful) {
                         Log.e("PartyWebSocketManager", "create error: ${it.code}")
