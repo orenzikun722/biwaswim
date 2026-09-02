@@ -64,7 +64,14 @@ fun calculateDistance(context: Context, latitude: Double, longitude: Double): Do
     )
 }
 
+object SwimDebugConfig {
+    var isForceSwimming: Boolean = false
+}
+
 fun isSwimming(context: Context, latitude: Double, longitude: Double): Boolean {
+    if (SwimDebugConfig.isForceSwimming) {
+        return true
+    }
     val geometry = BiwakoGeometryHolder.getGeometry(context)
     val factory = BiwakoGeometryHolder.getFactory()
     val point = factory.createPoint(

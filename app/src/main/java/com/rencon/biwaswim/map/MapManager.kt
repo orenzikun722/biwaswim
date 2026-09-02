@@ -32,6 +32,7 @@ import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -188,30 +189,7 @@ class MapManager(
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
                 // 1. 軌跡用 Source & LineLayer の初期化
-                val initialTrackFeatureCollection = if (trackPoints.size >= 2) {
-                    FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(trackPoints)))
-                } else {
-                    FeatureCollection.fromFeatures(emptyArray())
-                }
-                if (loadedStyle.getSource(TRACK_SOURCE_ID) == null) {
-                    val tSource = GeoJsonSource(TRACK_SOURCE_ID, initialTrackFeatureCollection)
-                    loadedStyle.addSource(tSource)
-                }
-                trackSource = loadedStyle.getSourceAs(TRACK_SOURCE_ID)
-
-                if (loadedStyle.getLayer(TRACK_LAYER_ID) == null) {
-                    val tLayer = LineLayer(TRACK_LAYER_ID, TRACK_SOURCE_ID).apply {
-                        setProperties(
-                            PropertyFactory.lineColor(Color.parseColor("#00E5FF")), // 鮮やかなシアン
-                            PropertyFactory.lineWidth(6.0f),
-                            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                            PropertyFactory.lineOpacity(0.9f)
-                        )
-                    }
-                    loadedStyle.addLayer(tLayer)
-                }
-                trackLayer = loadedStyle.getLayerAs(TRACK_LAYER_ID)
+                setupTrackLayer(loadedStyle)
 
                 // 2. 自身用マーカーの初期化
                 resetMarker(loadedStyle)
@@ -286,6 +264,92 @@ class MapManager(
         runOnMainThread {
             trackPoints.clear()
             trackSource?.setGeoJson(FeatureCollection.fromFeatures(emptyArray()))
+        }
+    }
+
+    /**
+     * 現在記録されている全軌跡座標を緯度・経度のペアリストとして取得します。
+     */
+    fun getTrackPoints(): List<Pair<Double, Double>> {
+        return trackPoints.map { Pair(it.latitude(), it.longitude()) }
+    }
+
+    /**
+     * 地図の現在のレンダリング結果をBitmapとしてキャプチャします。
+     */
+    fun captureSnapshot(callback: (Bitmap?) -> Unit) {
+        runOnMainThread {
+            val map = mapLibreMap
+            if (map != null) {
+                try {
+                    map.snapshot { bitmap ->
+                        callback(bitmap)
+                    }
+                } catch (e: Exception) {
+                    Log.e("MapManager", "Failed to capture map snapshot", e)
+                    callback(null)
+                }
+            } else {
+                callback(null)
+            }
+        }
+    }
+
+    /**
+     * 過去の遊泳記録の軌跡を地図上に描画し、全軌跡が綺麗に収まるようにカメラを自動調整します。
+     */
+    fun showHistoricalTrack(points: List<Pair<Double, Double>>) {
+        if (points.isEmpty()) return
+        runOnMainThread {
+            setTrackPoints(points)
+            val map = mapLibreMap ?: return@runOnMainThread
+
+            if (points.size >= 2) {
+                var minLat = Double.MAX_VALUE
+                var maxLat = -Double.MAX_VALUE
+                var minLon = Double.MAX_VALUE
+                var maxLon = -Double.MAX_VALUE
+
+                points.forEach { (lat, lon) ->
+                    if (lat < minLat) minLat = lat
+                    if (lat > maxLat) maxLat = lat
+                    if (lon < minLon) minLon = lon
+                    if (lon > maxLon) maxLon = lon
+                }
+
+                // 最小スパンを設定（過度なズームインで湖水だけになるのを防ぎ、周囲の湖岸も見えるようにする）
+                val minSpan = 0.006 // 約600m
+                val latSpan = maxLat - minLat
+                val lonSpan = maxLon - minLon
+
+                if (latSpan < minSpan) {
+                    val diff = (minSpan - latSpan) / 2.0
+                    minLat -= diff
+                    maxLat += diff
+                }
+                if (lonSpan < minSpan) {
+                    val diff = (minSpan - lonSpan) / 2.0
+                    minLon -= diff
+                    maxLon += diff
+                }
+
+                val bounds = LatLngBounds.Builder()
+                    .include(LatLng(minLat, minLon))
+                    .include(LatLng(maxLat, maxLon))
+                    .build()
+
+                val padding = (context.resources.displayMetrics.density * 80).toInt()
+                try {
+                    map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, padding))
+                } catch (e: Exception) {
+                    Log.e("MapManager", "Failed to fit camera bounds for track", e)
+                    val centerLat = (minLat + maxLat) / 2.0
+                    val centerLon = (minLon + maxLon) / 2.0
+                    map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(centerLat, centerLon), 15.0))
+                }
+            } else {
+                map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(points[0].first, points[0].second), 15.5))
+            }
         }
     }
 
@@ -663,7 +727,7 @@ class MapManager(
             val layer = SymbolLayer(LAYER_ID, SOURCE_ID).apply {
                 setProperties(
                     PropertyFactory.iconImage(ICON_ID),
-                    PropertyFactory.iconSize(0.25f),
+                    PropertyFactory.iconSize(0.1f),
                     PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
                     PropertyFactory.iconOffset(arrayOf(0f, 100f)),
                     PropertyFactory.iconAllowOverlap(true),
@@ -681,14 +745,49 @@ class MapManager(
         }
     }
 
+    private fun setupTrackLayer(loadedStyle: Style) {
+        val initialTrackFeatureCollection = if (trackPoints.size >= 2) {
+            FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(trackPoints)))
+        } else if (trackPoints.size == 1) {
+            FeatureCollection.fromFeature(Feature.fromGeometry(trackPoints[0]))
+        } else {
+            FeatureCollection.fromFeatures(emptyArray())
+        }
+        if (loadedStyle.getSource(TRACK_SOURCE_ID) == null) {
+            val tSource = GeoJsonSource(TRACK_SOURCE_ID, initialTrackFeatureCollection)
+            loadedStyle.addSource(tSource)
+        } else {
+            (loadedStyle.getSourceAs(TRACK_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(initialTrackFeatureCollection)
+        }
+        trackSource = loadedStyle.getSourceAs(TRACK_SOURCE_ID)
+
+        if (loadedStyle.getLayer(TRACK_LAYER_ID) == null) {
+            val tLayer = LineLayer(TRACK_LAYER_ID, TRACK_SOURCE_ID).apply {
+                setProperties(
+                    PropertyFactory.lineColor(Color.parseColor("#00E5FF")), // 鮮やかなシアン
+                    PropertyFactory.lineWidth(6.0f),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                    PropertyFactory.lineOpacity(0.95f)
+                )
+            }
+            loadedStyle.addLayer(tLayer)
+        }
+        trackLayer = loadedStyle.getLayerAs(TRACK_LAYER_ID)
+        applyTrackUpdate()
+    }
+
     private fun applyTrackUpdate() {
         if (trackPoints.size >= 2) {
             val lineString = LineString.fromLngLats(trackPoints)
             trackSource?.setGeoJson(Feature.fromGeometry(lineString))
         } else if (trackPoints.size == 1) {
             trackSource?.setGeoJson(Feature.fromGeometry(trackPoints[0]))
+        } else {
+            trackSource?.setGeoJson(FeatureCollection.fromFeatures(emptyArray()))
         }
     }
+
     fun changeStyleToOSM(context: Context){
         mapView.getMapAsync { map ->
             mapLibreMap = map
@@ -703,12 +802,14 @@ class MapManager(
             }
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
+                setupTrackLayer(loadedStyle)
                 resetMarker(loadedStyle)
                 reapplyAllPartyMarkers()
             }
         }
         attributionTextView?.text = context.getString(R.string.attribution_osm)
     }
+
     fun changeStyleToGSI(context: Context){
         mapView.getMapAsync { map ->
             mapLibreMap = map
@@ -723,12 +824,17 @@ class MapManager(
             }
             val style = Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
+                setupTrackLayer(loadedStyle)
                 resetMarker(loadedStyle)
                 reapplyAllPartyMarkers()
             }
         }
         attributionTextView?.text = context.getString(R.string.attribution_gsi)
     }
+    fun getCameraTarget(): LatLng? {
+        return mapLibreMap?.cameraPosition?.target
+    }
+
     fun jumpToMarker(selfName: String? = null, isSwimming: Boolean = false, swimStartTimeMs: Long = 0L){
         mapView.getMapAsync { map ->
             if (currentLatitude != 0.0 || currentLongitude != 0.0) {

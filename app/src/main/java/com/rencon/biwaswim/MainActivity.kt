@@ -51,6 +51,9 @@ import com.rencon.biwaswim.nmea.NmeaParser
 import com.rencon.biwaswim.nmea.calculateDistance
 import com.rencon.biwaswim.nmea.calculateDistanceBetween
 import com.rencon.biwaswim.nmea.isSwimming
+import com.rencon.biwaswim.nmea.SwimDebugConfig
+import android.content.res.ColorStateList
+import android.widget.Toast
 import com.rencon.biwaswim.notification.sendNotification
 import com.rencon.biwaswim.permission.checkPermission
 import com.rencon.biwaswim.service.GpsConnectionService
@@ -76,11 +79,15 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.MultiFormatWriter
 import com.google.zxing.common.BitMatrix
+import com.rencon.biwaswim.log.SwimCardGenerator
+import com.rencon.biwaswim.log.SwimLog
+import com.rencon.biwaswim.log.SwimLogManager
 import com.rencon.biwaswim.party.PartyWebSocketManager
 import com.rencon.biwaswim.party.PartyWebSocketManager.companion.join
 import com.rencon.biwaswim.party.PartyWebSocketManager.PartyConnectionCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.time.Duration.Companion.milliseconds
 
 class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
@@ -813,6 +820,11 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         sideMenuContainer = findViewById(R.id.sideMenuContainer)
         openMenuButton = findViewById(R.id.openSideMenu)
 
+        val menuWidth = (resources.displayMetrics.widthPixels * 0.66).toInt()
+        sideMenuContainer.layoutParams = sideMenuContainer.layoutParams.apply {
+            width = menuWidth
+        }
+
         openMenuButton.setOnClickListener { showSideMenu() }
 
         sideMenuGroup.post {
@@ -823,6 +835,62 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         jumpToMarkerButton.setOnClickListener {
             showSideMenu()
             mapManager.jumpToMarker(getMyUserName(), isSwimmingActive, swimStartTimeMs)
+        }
+
+        val openSwimLogsButton = findViewById<Button>(R.id.openSwimLogs)
+        openSwimLogsButton.setOnClickListener {
+            showSideMenu()
+            showSwimLogsDialog()
+        }
+
+        val btnDebugToggleSwimming = findViewById<Button>(R.id.btnDebugToggleSwimming)
+        val btnDebugStartSwim = findViewById<Button>(R.id.btnDebugStartSwim)
+        val btnDebugFinishSwim = findViewById<Button>(R.id.btnDebugFinishSwim)
+
+        fun updateDebugToggleUi() {
+            if (SwimDebugConfig.isForceSwimming) {
+                btnDebugToggleSwimming.text = getString(R.string.debug_toggle_swim_on)
+                btnDebugToggleSwimming.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FFD84315"))
+            } else {
+                btnDebugToggleSwimming.text = getString(R.string.debug_toggle_swim_off)
+                btnDebugToggleSwimming.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FF444444"))
+            }
+        }
+        updateDebugToggleUi()
+
+        btnDebugToggleSwimming.setOnClickListener {
+            SwimDebugConfig.isForceSwimming = !SwimDebugConfig.isForceSwimming
+            updateDebugToggleUi()
+            val stateText = if (SwimDebugConfig.isForceSwimming) "ON" else "OFF"
+            Toast.makeText(this, getString(R.string.debug_toast_swim_forced, stateText), Toast.LENGTH_SHORT).show()
+        }
+
+        btnDebugStartSwim.setOnClickListener {
+            if (isSwimmingActive) {
+                Toast.makeText(this, getString(R.string.debug_toast_already_swimming), Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            SwimDebugConfig.isForceSwimming = true
+            updateDebugToggleUi()
+
+            val mapTarget = mapManager.getCameraTarget()
+            val lat = lastKnownLatitude ?: mapTarget?.latitude ?: 35.25
+            val lon = lastKnownLongitude ?: mapTarget?.longitude ?: 136.05
+
+            startSwimSession(lat, lon)
+            mapManager.updateLocation(lat, lon)
+            showSideMenu()
+            Toast.makeText(this, getString(R.string.debug_toast_started), Toast.LENGTH_SHORT).show()
+        }
+
+        btnDebugFinishSwim.setOnClickListener {
+            if (!isSwimmingActive) {
+                Toast.makeText(this, getString(R.string.debug_toast_not_swimming), Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            finishSwimSession()
+            showSideMenu()
+            Toast.makeText(this, getString(R.string.debug_toast_finished), Toast.LENGTH_SHORT).show()
         }
 
         MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
@@ -1243,7 +1311,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         // フォアグラウンドサービスの通知を通常の接続ステータスに戻す
         gpsService?.updateSwimStatus(false)
 
-        val elapsedSec = (System.currentTimeMillis() - swimStartTimeMs) / 1000
+        val endTimeMs = System.currentTimeMillis()
+        val elapsedSec = (endTimeMs - swimStartTimeMs) / 1000
         val timeStr = formatElapsedTime(elapsedSec)
         val distStr = formatDistance(swimTotalDistanceMeters)
         val notifMessage = getString(R.string.swim_finished_text, timeStr, distStr)
@@ -1263,6 +1332,184 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                 swimStats.text = "${getString(R.string.swim_finished_title)}: $timeStr / $distStr"
             }
         }
+
+        val trackPoints = mapManager.getTrackPoints()
+        // 5秒以上または3m以上または有効な軌跡がある場合に保存
+        if (elapsedSec >= 5 || swimTotalDistanceMeters >= 3.0 || trackPoints.isNotEmpty()) {
+            val swimLog = SwimLog(
+                startTimeMs = swimStartTimeMs,
+                endTimeMs = endTimeMs,
+                durationSeconds = elapsedSec,
+                distanceMeters = swimTotalDistanceMeters,
+                trackPoints = trackPoints,
+                userName = getMyUserName()
+            )
+            SwimLogManager.getInstance(this).saveLog(swimLog)
+
+            // カメラを軌跡全体が綺麗に見える位置へ自動調整
+            mapManager.showHistoricalTrack(trackPoints)
+
+            lifecycleScope.launch(Dispatchers.Main) {
+                delay(350L)
+                mapManager.captureSnapshot { snapshot ->
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        val cardBmp = SwimCardGenerator.generateCardBitmap(this@MainActivity, swimLog, snapshot)
+                        val cardFile = SwimCardGenerator.saveCardToCache(this@MainActivity, cardBmp, swimLog.id)
+                        withContext(Dispatchers.Main) {
+                            showSwimResultDialog(swimLog, cardBmp, cardFile, isImmediateFinish = true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showSwimLogsDialog() {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_swim_logs, null)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        val logsContainer = dialogView.findViewById<LinearLayout>(R.id.logsContainer)
+        val emptyLogsText = dialogView.findViewById<TextView>(R.id.emptyLogsText)
+        val btnClose = dialogView.findViewById<ImageButton>(R.id.btnCloseLogs)
+
+        btnClose.setOnClickListener { dialog.dismiss() }
+
+        fun reloadLogs() {
+            logsContainer.removeAllViews()
+            val logs = SwimLogManager.getInstance(this).getAllLogs()
+            if (logs.isEmpty()) {
+                emptyLogsText.visibility = View.VISIBLE
+            } else {
+                emptyLogsText.visibility = View.GONE
+                for (log in logs) {
+                    val itemView = LayoutInflater.from(this).inflate(R.layout.item_swim_log, logsContainer, false)
+                    itemView.findViewById<TextView>(R.id.logDate).text = log.getFormattedDate()
+                    itemView.findViewById<TextView>(R.id.logDistance).text = log.getFormattedDistance()
+                    itemView.findViewById<TextView>(R.id.logDuration).text = log.getFormattedDuration()
+                    itemView.findViewById<TextView>(R.id.logPace).text = log.getPacePer100m()
+
+                    itemView.setOnClickListener {
+                        // 履歴から選択時も地図上に軌跡を描画＆全体が見えるようカメラフィット
+                        mapManager.showHistoricalTrack(log.trackPoints)
+                        showSwimResultDialog(log, null, null, isImmediateFinish = false)
+                    }
+
+                    itemView.findViewById<ImageButton>(R.id.btnDeleteLog).setOnClickListener {
+                        AlertDialog.Builder(this)
+                            .setTitle(getString(R.string.delete_record))
+                            .setMessage(getString(R.string.delete_record_confirm))
+                            .setPositiveButton(getString(R.string.ok)) { _, _ ->
+                                SwimLogManager.getInstance(this).deleteLog(log.id)
+                                reloadLogs()
+                            }
+                            .setNegativeButton(getString(R.string.cancel), null)
+                            .show()
+                    }
+
+                    logsContainer.addView(itemView)
+                }
+            }
+        }
+
+        reloadLogs()
+        dialog.show()
+    }
+
+    private fun showSwimResultDialog(
+        log: SwimLog,
+        preloadedBitmap: Bitmap?,
+        preloadedFile: File?,
+        isImmediateFinish: Boolean
+    ) {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_swim_result, null)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        val resultTitle = dialogView.findViewById<TextView>(R.id.resultTitle)
+        val btnClose = dialogView.findViewById<ImageButton>(R.id.btnCloseResult)
+        val progressLayout = dialogView.findViewById<LinearLayout>(R.id.progressLayout)
+        val cardImageView = dialogView.findViewById<ImageView>(R.id.cardImageView)
+        val btnShare = dialogView.findViewById<MaterialButton>(R.id.btnShare)
+        val btnSaveGallery = dialogView.findViewById<MaterialButton>(R.id.btnSaveGallery)
+        val btnViewOnMap = dialogView.findViewById<MaterialButton>(R.id.btnViewOnMap)
+
+        resultTitle.text = if (isImmediateFinish) {
+            getString(R.string.swim_finished_dialog_title)
+        } else {
+            getString(R.string.swim_logs_title)
+        }
+        btnClose.setOnClickListener { dialog.dismiss() }
+
+        var currentBitmap: Bitmap? = preloadedBitmap
+        var currentFile: File? = preloadedFile
+
+        fun updateUI(bmp: Bitmap, file: File?) {
+            currentBitmap = bmp
+            currentFile = file
+            cardImageView.setImageBitmap(bmp)
+            progressLayout.visibility = View.GONE
+            cardImageView.visibility = View.VISIBLE
+            btnShare.isEnabled = true
+            btnSaveGallery.isEnabled = true
+        }
+
+        btnShare.setOnClickListener {
+            val file = currentFile
+            if (file != null) {
+                SwimCardGenerator.shareCard(this, file, log)
+            } else if (currentBitmap != null) {
+                val newFile = SwimCardGenerator.saveCardToCache(this, currentBitmap!!, log.id)
+                if (newFile != null) {
+                    currentFile = newFile
+                    SwimCardGenerator.shareCard(this, newFile, log)
+                }
+            }
+        }
+
+        btnSaveGallery.setOnClickListener {
+            val bmp = currentBitmap
+            if (bmp != null) {
+                val success = SwimCardGenerator.saveCardToGallery(this, bmp, log.id)
+                val msg = if (success) {
+                    getString(R.string.save_gallery_success)
+                } else {
+                    getString(R.string.save_gallery_failure)
+                }
+                Snackbar.make(mainView, msg, Snackbar.LENGTH_LONG).show()
+            }
+        }
+
+        btnViewOnMap.setOnClickListener {
+            dialog.dismiss()
+            mapManager.showHistoricalTrack(log.trackPoints)
+        }
+
+        if (preloadedBitmap != null) {
+            updateUI(preloadedBitmap, preloadedFile)
+        } else {
+            progressLayout.visibility = View.VISIBLE
+            cardImageView.visibility = View.GONE
+            btnShare.isEnabled = false
+            btnSaveGallery.isEnabled = false
+
+            lifecycleScope.launch(Dispatchers.Main) {
+                delay(350L)
+                mapManager.captureSnapshot { snapshot ->
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        val bmp = SwimCardGenerator.generateCardBitmap(this@MainActivity, log, snapshot)
+                        val file = SwimCardGenerator.saveCardToCache(this@MainActivity, bmp, log.id)
+                        withContext(Dispatchers.Main) {
+                            updateUI(bmp, file)
+                        }
+                    }
+                }
+            }
+        }
+
+        dialog.show()
     }
 
     private fun startSwimTimer() {
@@ -1339,8 +1586,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         longitude = lon
                     )
                     if (::distanceFromShore.isInitialized) {
-                        val distancestr = distance.toInt().toString()
-                        distanceFromShore.text = distancestr + "m"
+                        distanceFromShore.text = getString(R.string.distance_text, distance.toInt().toString())
                         distanceFromShore.visibility = View.VISIBLE
                         var color = Color.rgb(0, 75, 175)
                         if (inWater) {
