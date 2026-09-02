@@ -58,6 +58,12 @@ import com.rencon.biwaswim.notification.sendNotification
 import com.rencon.biwaswim.permission.checkPermission
 import com.rencon.biwaswim.service.GpsConnectionService
 import com.rencon.biwaswim.vibration.VibrationHelper
+import com.rencon.biwaswim.disaster.DisasterWebSocketManager
+import com.rencon.biwaswim.disaster.model.DisasterAlertMessage
+import com.rencon.biwaswim.disaster.ui.DisasterAlertUiHelper
+import androidx.cardview.widget.CardView
+import android.widget.EditText
+import com.google.android.material.switchmaterial.SwitchMaterial
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -167,6 +173,9 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     private lateinit var farWarningChannel: NotificationChannel
     private lateinit var weatherWarningChannel: NotificationChannel
     private lateinit var swimmingDetailChannel: NotificationChannel
+    private lateinit var disasterAlertChannel: NotificationChannel
+    private lateinit var disasterWsManager: DisasterWebSocketManager
+    private lateinit var disasterAlertUiHelper: DisasterAlertUiHelper
     private lateinit var vibrationHelper: VibrationHelper
     private var isFarWarningActive: Boolean = false
     private var farWarningJob: Job? = null
@@ -808,6 +817,32 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 500, 150, 500, 150, 800)
         }
+        manager.createNotificationChannel(farWarningChannel)
+
+        disasterAlertChannel = NotificationChannel(
+            "disaster_alert_channel",
+            "緊急地震速報・災害アラート",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "P2P地震情報および緊急地震速報のリアルタイム警報"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 500, 150, 500, 150, 800)
+        }
+        manager.createNotificationChannel(disasterAlertChannel)
+
+        // 災害アラートUIヘルパー & WebSocketマネージャーの初期化
+        val disasterBannerCard = findViewById<CardView>(R.id.disasterAlertBanner)
+            ?: findViewById<CardView>(R.id.disasterBannerCard)
+        disasterAlertUiHelper = DisasterAlertUiHelper(this, disasterBannerCard, vibrationHelper)
+
+        disasterWsManager = DisasterWebSocketManager.getInstance(this)
+        disasterWsManager.addListener(object : DisasterWebSocketManager.DisasterAlertListener {
+            override fun onDisasterAlertReceived(alert: DisasterAlertMessage) {
+                Log.i(TAG, "Disaster alert received in MainActivity: ${alert.summary}")
+                disasterAlertUiHelper.showAlert(alert)
+            }
+        })
+        disasterWsManager.connect()
 
 
         openSettingsButton = findViewById<Button>(R.id.openSettings)
@@ -891,6 +926,28 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             finishSwimSession()
             showSideMenu()
             Toast.makeText(this, getString(R.string.debug_toast_finished), Toast.LENGTH_SHORT).show()
+        }
+
+        val btnDebugTestEEW = findViewById<Button>(R.id.btnDebugTestEEW)
+        val btnDebugTestEEWStrong = findViewById<Button>(R.id.btnDebugTestEEWStrong)
+        val btnDebugTestQuake = findViewById<Button>(R.id.btnDebugTestQuake)
+
+        btnDebugTestEEW.setOnClickListener {
+            showSideMenu()
+            disasterWsManager.simulateAlert(isEEW = true, scale = 40)
+            Toast.makeText(this, "緊急地震速報（震度4）をシミュレーション発信しました", Toast.LENGTH_SHORT).show()
+        }
+
+        btnDebugTestEEWStrong.setOnClickListener {
+            showSideMenu()
+            disasterWsManager.simulateAlert(isEEW = true, scale = 55)
+            Toast.makeText(this, "緊急地震速報（震度6弱）をシミュレーション発信しました", Toast.LENGTH_SHORT).show()
+        }
+
+        btnDebugTestQuake.setOnClickListener {
+            showSideMenu()
+            disasterWsManager.simulateAlert(isEEW = false, scale = 30)
+            Toast.makeText(this, "地震情報（震度3）をシミュレーション発信しました", Toast.LENGTH_SHORT).show()
         }
 
         MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
@@ -1197,12 +1254,88 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         }
         layout.addView(mapStyleRow)
 
+        // --- 災害・地震アラート設定セクション ---
+        val disasterSectionTitle = TextView(this).apply {
+            text = getString(R.string.disaster_alert_settings)
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, (20 * resources.displayMetrics.density).toInt(), 0, (6 * resources.displayMetrics.density).toInt())
+        }
+        layout.addView(disasterSectionTitle)
+
+        // アラート受信の有効/無効トグル
+        val disasterToggleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (8 * resources.displayMetrics.density).toInt())
+        }
+        val disasterToggleLabel = TextView(this).apply {
+            text = getString(R.string.disaster_ws_enabled)
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val disasterSwitch = SwitchMaterial(this).apply {
+            isChecked = disasterWsManager.isEnabled
+            setOnCheckedChangeListener { _, isChecked ->
+                disasterWsManager.isEnabled = isChecked
+            }
+        }
+        disasterToggleRow.addView(disasterToggleLabel)
+        disasterToggleRow.addView(disasterSwitch)
+        layout.addView(disasterToggleRow)
+
+        // WebSocket URL 設定行
+        val disasterUrlRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val disasterUrlDisplay = TextView(this).apply {
+            text = disasterWsManager.serverUrl
+            textSize = 13f
+            setTextColor(Color.DKGRAY)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val changeUrlButton = MaterialButton(this).apply {
+            text = getString(R.string.change)
+            setOnClickListener {
+                val input = EditText(this@MainActivity).apply {
+                    setText(disasterWsManager.serverUrl)
+                    hint = getString(R.string.disaster_ws_url_hint)
+                    setSelection(text.length)
+                }
+                val pad = (20 * resources.displayMetrics.density).toInt()
+                val container = LinearLayout(this@MainActivity).apply {
+                    setPadding(pad, (8 * resources.displayMetrics.density).toInt(), pad, 0)
+                    addView(input)
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(getString(R.string.disaster_ws_url_label))
+                    .setView(container)
+                    .setPositiveButton(getString(R.string.save)) { _, _ ->
+                        val newUrl = input.text.toString().trim()
+                        if (newUrl.isNotBlank()) {
+                            disasterWsManager.serverUrl = newUrl
+                            disasterUrlDisplay.text = newUrl
+                            Toast.makeText(this@MainActivity, "URLを更新しました: $newUrl", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .setNegativeButton(getString(R.string.cancel), null)
+                    .show()
+            }
+        }
+        disasterUrlRow.addView(disasterUrlDisplay)
+        disasterUrlRow.addView(changeUrlButton)
+        layout.addView(disasterUrlRow)
+
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.settings))
             .setView(layout)
             .setPositiveButton(getString(R.string.close), null)
             .show()
     }
+
 
     private fun showSideMenu() {
         val targetX = if (!isMenuOpen) {

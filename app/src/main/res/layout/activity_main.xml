@@ -29,6 +29,17 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- 災害・緊急地震速報アラートバナー -->
+    <include
+        android:id="@+id/disasterAlertBanner"
+        layout="@layout/view_disaster_alert_banner"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <TextView
         android:id="@+id/distanceFromShore"
         android:layout_width="wrap_content"

@@ -107,4 +107,21 @@
     <string name="debug_toast_finished">Force swim session finished</string>
     <string name="debug_toast_already_swimming">Already swimming</string>
     <string name="debug_toast_not_swimming">Not currently swimming</string>
+    <string name="disaster_alert_settings">Disaster / Earthquake Alert</string>
+    <string name="disaster_ws_url_label">WebSocket Relay URL</string>
+    <string name="disaster_ws_url_hint">e.g. ws://10.0.2.2:8080</string>
+    <string name="disaster_ws_enabled">Enable Earthquake Alerts</string>
+    <string name="debug_test_eew">🚨 Test EEW (Intensity 4)</string>
+    <string name="debug_test_eew_strong">🚨 Test EEW (Intensity 6-)</string>
+    <string name="debug_test_quake">⚠️ Test Quake Info (Intensity 3)</string>
+    <string name="eew_title">緊急地震速報 (EEW)</string>
+    <string name="quake_title">地震情報</string>
+    <string name="disaster_detail_title">災害情報詳細</string>
+    <string name="disaster_evacuation_advice">⚠️ 【安全確保】湖や川で遊泳中・水上活動中の方は直ちに水から上がり、安全な高い場所へ避難してください。揺れや津波、水面の急変に警戒してください。</string>
+    <string name="disaster_hypocenter">震源地</string>
+    <string name="disaster_magnitude">規模 (M)</string>
+    <string name="disaster_depth">深さ</string>
+    <string name="disaster_max_scale">最大予想震度</string>
+    <string name="disaster_event_time">発生/発報時刻</string>
+    <string name="disaster_affected_areas">予想震度対象地域</string>
 </resources>

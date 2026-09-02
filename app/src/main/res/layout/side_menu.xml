@@ -174,7 +174,7 @@
                 android:layout_marginBottom="12dp"
                 android:background="#22FF8800"
                 android:padding="6dp"
-                android:visibility="visible">
+                android:visibility="gone">
 
                 <TextView
                     android:layout_width="match_parent"
@@ -242,7 +242,72 @@
                     android:insetTop="0dp"
                     android:insetRight="0dp"
                     android:insetBottom="0dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="6dp"
+                    android:layout_marginBottom="6dp"
+                    android:background="#66CC6600" />
+
+                <Button
+                    android:id="@+id/btnDebugTestEEW"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/white"
+                    app:backgroundTint="#FFD84315"
+                    app:strokeColor="#CC6600"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="0dp"
+                    android:padding="10dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:textSize="12sp"
+                    android:text="@string/debug_test_eew"
+                    android:insetLeft="0dp"
+                    android:insetTop="0dp"
+                    android:insetRight="0dp"
+                    android:insetBottom="0dp" />
+
+                <Button
+                    android:id="@+id/btnDebugTestEEWStrong"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/white"
+                    app:backgroundTint="#FFB71C1C"
+                    app:strokeColor="#CC6600"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="0dp"
+                    android:padding="10dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:textSize="12sp"
+                    android:text="@string/debug_test_eew_strong"
+                    android:insetLeft="0dp"
+                    android:insetTop="0dp"
+                    android:insetRight="0dp"
+                    android:insetBottom="0dp" />
+
+                <Button
+                    android:id="@+id/btnDebugTestQuake"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/white"
+                    app:backgroundTint="#FFF57C00"
+                    app:strokeColor="#CC6600"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="0dp"
+                    android:padding="10dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:textSize="12sp"
+                    android:text="@string/debug_test_quake"
+                    android:insetLeft="0dp"
+                    android:insetTop="0dp"
+                    android:insetRight="0dp"
+                    android:insetBottom="0dp" />
             </LinearLayout>
+
 
         </LinearLayout>
     </ScrollView>
