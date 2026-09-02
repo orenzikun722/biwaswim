@@ -62,9 +62,7 @@
     <string name="party_member_left">%1$s が退室しました</string>
     <string name="party_disconnected">パーティー接続が切断されました</string>
     <string name="party_members_header">パーティーメンバー (%1$d人):</string>
-    <string name="party_role_host">ホスト</string>
     <string name="party_role_you">自分</string>
-    <string name="party_role_host_you">ホスト・自分</string>
     <string name="invite_with_link">リンクで招待</string>
     <string name="invite_message">ビワスイムの招待が届いています！\n%1$s</string>
     <string name="username">ユーザー名</string>
@@ -79,4 +77,10 @@
     <string name="map_style">マップスタイル</string>
     <string name="error_failed_to_connect">サーバーへの接続に失敗しました</string>
     <string name="error_unknown_message">不明なエラー</string>
+    <string name="party_member_info_swimming">%1$s\n岸からの距離: %2$s | 遊泳時間: %3$s</string>
+    <string name="party_member_info_not_swimming">%1$s\n岸からの距離: %2$s</string>
+    <string name="party_member_info_self_swimming">%1$s (自分)\n岸からの距離: %2$s | 遊泳時間: %3$s</string>
+    <string name="party_member_info_self_not_swimming">%1$s (自分)\n岸からの距離: %2$s</string>
+    <string name="party_member_no_location">%1$s の位置データはまだ受信されていません</string>
+    <string name="party_member_distance_unknown">不明</string>
 </resources>

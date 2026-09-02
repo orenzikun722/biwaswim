@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".MainActivity"
-    android:background="@color/background">
+    android:background="@color/background"
+    tools:context=".MainActivity">
 
     <org.maplibre.android.maps.MapView
         android:id="@+id/mapView"
@@ -20,99 +19,102 @@
         android:id="@+id/connectionStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
         android:layout_marginTop="30dp"
         android:layout_marginEnd="10dp"
         android:background="@color/disconnected"
-        android:textColor="@color/black"
         android:padding="5dp"
+        android:text="@string/disconnected"
+        android:textColor="@color/black"
         android:textSize="24sp"
-        android:text="@string/disconnected"/>
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
     <TextView
         android:id="@+id/distanceFromShore"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        android:layout_marginTop="30dp"
-        android:layout_marginStart="10dp"
-        android:textSize="26sp"
-        android:textColor="@color/white"
-        android:text=""
-        android:visibility="invisible"
+        android:layout_marginTop="20dp"
+        android:layout_marginEnd="10dp"
         android:background="@color/distance_from_shore_bg"
-        android:padding="5dp"/>
+        android:padding="5dp"
+        android:text=""
+        android:textColor="@color/white"
+        android:textSize="26sp"
+        android:visibility="invisible"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/connectionStatus" />
 
     <TextView
         android:id="@+id/swimStats"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintTop_toBottomOf="@id/distanceFromShore"
-        app:layout_constraintStart_toStartOf="parent"
-        android:layout_marginTop="10dp"
         android:layout_marginStart="10dp"
+        android:layout_marginTop="10dp"
+        android:background="#D9002B66"
+        android:padding="6dp"
+        android:text=""
+        android:textColor="@color/white"
         android:textSize="22sp"
         android:textStyle="bold"
-        android:textColor="@color/white"
-        android:text=""
         android:visibility="gone"
-        android:background="#D9002B66"
-        android:padding="6dp"/>
-
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/distanceFromShore" />
+    <!--  提供元表示(必須)  -->
     <TextView
         android:id="@+id/attribution"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="8dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+        android:background="#CCFFFFFF"
         android:padding="4dp"
         android:text="@string/attribution_osm"
+        android:textColor="@color/black"
         android:textSize="11sp"
-        android:background="#CCFFFFFF"
-        android:textColor="@color/black"/>
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+
+    <LinearLayout
+        android:id="@+id/nullification"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0"
+        android:background="#aa000000"
+        android:clickable="false"
+        android:focusable="false"
+        android:orientation="horizontal"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <LinearLayout
         android:id="@+id/sideMenuGroup"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginBottom="26dp"
+        android:layout_height="match_parent"
+        android:layout_marginStart="0dp"
+        android:layout_marginTop="0dp"
+        android:gravity="top"
+        android:orientation="horizontal"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        android:gravity="bottom">
+        app:layout_constraintTop_toTopOf="parent">
 
         <include
             android:id="@+id/sideMenuContainer"
             layout="@layout/side_menu"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:layout_marginEnd="10dp" />
 
         <ImageButton
             android:id="@+id/openSideMenu"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:src="@drawable/outline_dehaze_24"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/rounded_corner"
             android:padding="4dp"
-            android:background="@drawable/rounded_corner" />
-
+            android:src="@drawable/outline_dehaze_24" />
     </LinearLayout>
-    <TextView
-        android:id="@+id/partyMember"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/swimStats"
-        android:layout_marginTop="10dp"
-        android:layout_marginStart="10dp"
-        android:text=""
-        android:textSize="18sp"
-        android:textColor="@color/white"
-        android:visibility="gone"
-        android:background="#D9002B66"
-        android:padding="6dp"/>
 
 
 </androidx.constraintlayout.widget.ConstraintLayout>

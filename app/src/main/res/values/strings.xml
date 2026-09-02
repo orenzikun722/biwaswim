@@ -61,9 +61,7 @@
     <string name="party_member_left">%1$s left the party.</string>
     <string name="party_disconnected">Disconnected from the party.</string>
     <string name="party_members_header">Party Members (%1$d):</string>
-    <string name="party_role_host">Host</string>
     <string name="party_role_you">You</string>
-    <string name="party_role_host_you">Host, You</string>
     <string name="invite_with_link">Invite with link</string>
     <string name="invite_message">You have received an invitation to Biwa Swim!\n%1$s</string>
     <string name="username">User Name</string>
@@ -78,5 +76,10 @@
     <string name="map_style">Map Style</string>
     <string name="error_failed_to_connect">Failed to connect to server</string>
     <string name="error_unknown_message">Unknown error</string>
-
+    <string name="party_member_info_swimming">%1$s\nShore dist: %2$s | Swim time: %3$s</string>
+    <string name="party_member_info_not_swimming">%1$s\nShore dist: %2$s</string>
+    <string name="party_member_info_self_swimming">%1$s (You)\nShore dist: %2$s | Swim time: %3$s</string>
+    <string name="party_member_info_self_not_swimming">%1$s (You)\nShore dist: %2$s</string>
+    <string name="party_member_no_location">Location data for %1$s has not been received yet</string>
+    <string name="party_member_distance_unknown">Unknown</string>
 </resources>

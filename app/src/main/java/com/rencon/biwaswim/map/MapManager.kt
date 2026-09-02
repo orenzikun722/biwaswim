@@ -14,6 +14,12 @@ import android.widget.TextView
 import com.google.android.material.snackbar.Snackbar
 import com.rencon.biwaswim.MainActivity
 import com.rencon.biwaswim.R
+import com.rencon.biwaswim.nmea.calculateDistance
+import com.rencon.biwaswim.nmea.calculateDistanceBetween
+import com.rencon.biwaswim.nmea.isSwimming
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -38,6 +44,21 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+
+/**
+ * パーティメンバーの遊泳状態・海岸距離・遊泳時間を管理するデータクラス
+ */
+data class MemberSwimState(
+    val clientId: String,
+    var name: String,
+    var latitude: Double,
+    var longitude: Double,
+    var distanceFromShoreMeters: Double = 0.0,
+    var isSwimming: Boolean = false,
+    var swimStartTimeMs: Long = 0L,
+    var outOfWaterCounter: Int = 0,
+    var lastUpdatedTimeMs: Long = 0L
+)
 
 /**
  * MapLibre 地図の初期化、スタイル設定、マーカーレイヤー、泳いだ軌跡（線）レイヤーの管理、ライフサイクル委譲を行うクラス。
@@ -134,6 +155,8 @@ class MapManager(
     // パーティメンバーのマーカー管理
     private val memberLocations = mutableMapOf<String, LatLng>()
     private val memberNames = mutableMapOf<String, String>()
+    private val memberLastUpdatedTimes = mutableMapOf<String, Long>()
+    private val memberSwimStates = mutableMapOf<String, MemberSwimState>()
     private val partyMarkers = mutableMapOf<String, Marker>()
     private val partyMarkerIcons = mutableMapOf<String, Icon>()
 
@@ -153,6 +176,15 @@ class MapManager(
 
         mapView.getMapAsync { map ->
             mapLibreMap = map
+            map.setOnMarkerClickListener { marker ->
+                val entry = partyMarkers.entries.find { it.value == marker }
+                if (entry != null) {
+                    focusOnMember(entry.key)
+                    true
+                } else {
+                    false
+                }
+            }
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
                 // 1. 軌跡用 Source & LineLayer の初期化
@@ -275,8 +307,8 @@ class MapManager(
      */
     private fun createPartyMemberMarkerBitmap(displayName: String, color: Int): Bitmap {
         val baseBitmap = BitmapFactory.decodeResource(context.resources, R.drawable.marker)
-        val scaledWidth = 64
-        val scaledHeight = 64
+        val scaledWidth = 128
+        val scaledHeight = 128
         val pinBitmap = if (baseBitmap != null) {
             val tinted = createTintedMarkerBitmap(baseBitmap, color)
             Bitmap.createScaledBitmap(tinted, scaledWidth, scaledHeight, true)
@@ -370,6 +402,7 @@ class MapManager(
 
     /**
      * パーティメンバーの位置を更新または追加します。
+     * 5秒ごとに取得される緯度経度からgeoJsonデータを用いて海岸からの距離および遊泳状態を計算・更新します。
      */
     fun updateMemberLocation(clientId: String, latitude: Double, longitude: Double, displayName: String? = null) {
         Log.d("MapManager", "updateMemberLocation: clientId=$clientId, lat=$latitude, lon=$longitude, displayName=$displayName")
@@ -381,6 +414,46 @@ class MapManager(
 
             val latLng = LatLng(latitude, longitude)
             memberLocations[clientId] = latLng
+            val now = System.currentTimeMillis()
+            memberLastUpdatedTimes[clientId] = now
+
+            // 5秒ごとに取得される緯度経度からgeoJsonデータを用いて海岸からの距離と遊泳判定を計算
+            val shoreDistance = calculateDistance(context, latitude, longitude)
+            val inWater = isSwimming(context, latitude, longitude)
+
+            val state = memberSwimStates.getOrPut(clientId) {
+                MemberSwimState(
+                    clientId = clientId,
+                    name = effectiveName,
+                    latitude = latitude,
+                    longitude = longitude,
+                    distanceFromShoreMeters = shoreDistance,
+                    isSwimming = false,
+                    swimStartTimeMs = 0L,
+                    outOfWaterCounter = 0,
+                    lastUpdatedTimeMs = now
+                )
+            }
+            state.name = effectiveName
+            state.latitude = latitude
+            state.longitude = longitude
+            state.distanceFromShoreMeters = shoreDistance
+            state.lastUpdatedTimeMs = now
+
+            if (inWater) {
+                if (!state.isSwimming) {
+                    state.isSwimming = true
+                    state.swimStartTimeMs = now
+                }
+                state.outOfWaterCounter = 0
+            } else {
+                if (state.isSwimming) {
+                    state.outOfWaterCounter++
+                    if (state.outOfWaterCounter >= 3) {
+                        state.isSwimming = false
+                    }
+                }
+            }
 
             val map = mapLibreMap
             if (map == null) {
@@ -420,6 +493,8 @@ class MapManager(
         runOnMainThread {
             memberLocations.remove(clientId)
             memberNames.remove(clientId)
+            memberLastUpdatedTimes.remove(clientId)
+            memberSwimStates.remove(clientId)
             partyMarkers.remove(clientId)?.let { marker ->
                 mapLibreMap?.removeMarker(marker)
                 Log.d("MapManager", "Removed marker for $clientId")
@@ -436,11 +511,79 @@ class MapManager(
         runOnMainThread {
             memberLocations.clear()
             memberNames.clear()
+            memberLastUpdatedTimes.clear()
+            memberSwimStates.clear()
             partyMarkers.values.forEach { marker ->
                 mapLibreMap?.removeMarker(marker)
             }
             partyMarkers.clear()
             partyMarkerIcons.clear()
+        }
+    }
+
+    /**
+     * 距離（メートル）を表示用文字列（m または km）にフォーマットします。
+     */
+    fun formatDistance(meters: Double): String {
+        return if (meters >= 1000.0) {
+            String.format(Locale.getDefault(), "%.2f km", meters / 1000.0)
+        } else {
+            String.format(Locale.getDefault(), "%d m", meters.toInt())
+        }
+    }
+
+    /**
+     * 経過秒数を "HH:mm:ss" または "mm:ss" 形式にフォーマットします。
+     */
+    fun formatElapsedTime(elapsedSeconds: Long): String {
+        val hours = elapsedSeconds / 3600
+        val minutes = (elapsedSeconds % 3600) / 60
+        val seconds = elapsedSeconds % 60
+        return if (hours > 0) {
+            String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+        }
+    }
+
+    /**
+     * 指定したパーティメンバーのピンにカメラを合わせ、海岸からの距離および遊泳状態時の遊泳時間を表示します。
+     */
+    fun focusOnMember(clientId: String) {
+        runOnMainThread {
+            val map = mapLibreMap ?: return@runOnMainThread
+            val state = memberSwimStates[clientId]
+            val latLng = memberLocations[clientId]
+            val name = memberNames[clientId] ?: context.getString(R.string.party_default_member_name)
+
+            if (latLng == null) {
+                showToast(context.getString(R.string.party_member_no_location, name))
+                return@runOnMainThread
+            }
+
+            map.animateCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(latLng)
+                        .zoom(DEFAULT_ZOOM * 1.3)
+                        .tilt(DEFAULT_TILT)
+                        .build()
+                )
+            )
+
+            // 海岸（湖岸）からの距離
+            val shoreDist = state?.distanceFromShoreMeters ?: calculateDistance(context, latLng.latitude, latLng.longitude)
+            val shoreDistStr = formatDistance(shoreDist)
+
+            // 遊泳時間（遊泳状態であるときのみ動的に計算して表示）
+            val message = if (state != null && state.isSwimming && state.swimStartTimeMs > 0L) {
+                val elapsedSec = maxOf(0L, (System.currentTimeMillis() - state.swimStartTimeMs) / 1000)
+                val timeStr = formatElapsedTime(elapsedSec)
+                context.getString(R.string.party_member_info_swimming, name, shoreDistStr, timeStr)
+            } else {
+                context.getString(R.string.party_member_info_not_swimming, name, shoreDistStr)
+            }
+            showToast(message)
         }
     }
 
@@ -549,6 +692,15 @@ class MapManager(
     fun changeStyleToOSM(context: Context){
         mapView.getMapAsync { map ->
             mapLibreMap = map
+            map.setOnMarkerClickListener { marker ->
+                val entry = partyMarkers.entries.find { it.value == marker }
+                if (entry != null) {
+                    focusOnMember(entry.key)
+                    true
+                } else {
+                    false
+                }
+            }
             val style = Style.Builder().fromJson(OSM_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
                 resetMarker(loadedStyle)
@@ -560,6 +712,15 @@ class MapManager(
     fun changeStyleToGSI(context: Context){
         mapView.getMapAsync { map ->
             mapLibreMap = map
+            map.setOnMarkerClickListener { marker ->
+                val entry = partyMarkers.entries.find { it.value == marker }
+                if (entry != null) {
+                    focusOnMember(entry.key)
+                    true
+                } else {
+                    false
+                }
+            }
             val style = Style.Builder().fromJson(GSI_SATELLITE_STYLE_JSON)
             map.setStyle(style) { loadedStyle ->
                 resetMarker(loadedStyle)
@@ -568,7 +729,7 @@ class MapManager(
         }
         attributionTextView?.text = context.getString(R.string.attribution_gsi)
     }
-    fun jumpToMarker(){
+    fun jumpToMarker(selfName: String? = null, isSwimming: Boolean = false, swimStartTimeMs: Long = 0L){
         mapView.getMapAsync { map ->
             if (currentLatitude != 0.0 || currentLongitude != 0.0) {
                 map.animateCamera(CameraUpdateFactory.newCameraPosition(
@@ -578,14 +739,25 @@ class MapManager(
                         .tilt(DEFAULT_TILT)
                         .build()
                 ))
-            }else{
+                if (selfName != null) {
+                    val shoreDist = calculateDistance(context, currentLatitude, currentLongitude)
+                    val shoreDistStr = formatDistance(shoreDist)
+                    val message = if (isSwimming && swimStartTimeMs > 0L) {
+                        val elapsedSec = maxOf(0L, (System.currentTimeMillis() - swimStartTimeMs) / 1000)
+                        val timeStr = formatElapsedTime(elapsedSec)
+                        context.getString(R.string.party_member_info_self_swimming, selfName, shoreDistStr, timeStr)
+                    } else {
+                        context.getString(R.string.party_member_info_self_not_swimming, selfName, shoreDistStr)
+                    }
+                    showToast(message)
+                }
+            } else {
                 showToast(context.getString(R.string.toast_no_location))
             }
         }
     }
     fun showToast(text: String) {
         Snackbar.make(mapView, text, Snackbar.LENGTH_LONG)
-            .setBackgroundTint(context.getColor(R.color.snackbar_background))
             .show()
     }
     // --- ライフサイクルメソッド ---

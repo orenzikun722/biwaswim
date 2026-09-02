@@ -174,7 +174,10 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     lateinit var createPartyButton: Button
     lateinit var invitePartyButton: Button
     lateinit var leavePartyButton: Button
-    private lateinit var partyMemberTextView: TextView
+    lateinit var nullificationLayout: LinearLayout
+    private lateinit var partyMembersLayout: LinearLayout
+    private lateinit var partyMemberHeader: TextView
+    private lateinit var partyMemberList: LinearLayout
     private val partyMembers = linkedSetOf<String>()
     private val partyMemberNames = mutableMapOf<String, String>()
 
@@ -501,13 +504,20 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     /** パーティメンバー表示の更新（必ず UI スレッドから呼ぶこと） */
     private fun updatePartyMembersUI() {
         runOnUiThread {
-            if (!::partyMemberTextView.isInitialized) return@runOnUiThread
+            if (!::partyMembersLayout.isInitialized) return@runOnUiThread
             if (partyMembers.isEmpty()) {
-                partyMemberTextView.visibility = View.GONE
-                partyMemberTextView.text = ""
+                partyMembersLayout.visibility = View.GONE
+                partyMemberList.removeAllViews()
             } else {
                 val selfId = PartyWebSocketManager.companion.APP_ID
-                val memberLines = partyMembers.map { memberId ->
+                partyMemberHeader.text = getString(R.string.party_members_header, partyMembers.size)
+                partyMemberList.removeAllViews()
+
+                val typedValue = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackground, typedValue, true)
+                val selectableBackgroundRes = typedValue.resourceId
+
+                for (memberId in partyMembers) {
                     val isSelf = memberId == selfId
                     val displayName = if (isSelf) {
                         getMyUserName()
@@ -515,17 +525,30 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
                         partyMemberNames[memberId] ?: getString(R.string.party_default_member_name)
                     }
                     val roleLabel = when {
-                        memberId == selfId && memberId == hostAppId -> " (${getString(R.string.party_role_host_you)})"
-                        memberId == hostAppId -> " (${getString(R.string.party_role_host)})"
-                        memberId == selfId -> " (${getString(R.string.party_role_you)})"
+                        isSelf -> " (${getString(R.string.party_role_you)})"
                         else -> ""
                     }
-                    "• $displayName$roleLabel"
-                }.joinToString("\n")
 
-                val header = getString(R.string.party_members_header, partyMembers.size)
-                partyMemberTextView.text = "$header\n$memberLines"
-                partyMemberTextView.visibility = View.VISIBLE
+                    val itemView = TextView(this).apply {
+                        text = "• $displayName$roleLabel"
+                        textSize = 16f
+                        setTextColor(Color.WHITE)
+                        setPadding(8, 12, 8, 12)
+                        setBackgroundResource(selectableBackgroundRes)
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener {
+                            showSideMenu()
+                            if (isSelf) {
+                                mapManager.jumpToMarker(getMyUserName(), isSwimmingActive, swimStartTimeMs)
+                            } else {
+                                mapManager.focusOnMember(memberId)
+                            }
+                        }
+                    }
+                    partyMemberList.addView(itemView)
+                }
+                partyMembersLayout.visibility = View.VISIBLE
             }
         }
     }
@@ -753,7 +776,9 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         }
         distanceFromShore = findViewById(R.id.distanceFromShore)
         swimStats = findViewById(R.id.swimStats)
-        partyMemberTextView = findViewById(R.id.partyMember)
+        partyMembersLayout = findViewById(R.id.partyMembersLayout)
+        partyMemberHeader = findViewById(R.id.partyMemberHeader)
+        partyMemberList = findViewById(R.id.partyMemberList)
 
         overlayDrawable = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -797,7 +822,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         jumpToMarkerButton = findViewById(R.id.jumpToMarker)
         jumpToMarkerButton.setOnClickListener {
             showSideMenu()
-            mapManager.jumpToMarker()
+            mapManager.jumpToMarker(getMyUserName(), isSwimmingActive, swimStartTimeMs)
         }
 
         MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
@@ -914,6 +939,11 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             "泳いでいるときの通知",
             NotificationManager.IMPORTANCE_DEFAULT
         )
+
+        nullificationLayout = findViewById(R.id.nullification)
+        nullificationLayout.setOnClickListener {
+            showSideMenu()
+        }
         manager.createNotificationChannel(farWarningChannel)
         manager.createNotificationChannel(weatherWarningChannel)
         manager.createNotificationChannel(swimmingDetailChannel)
@@ -1108,8 +1138,21 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
 
     private fun showSideMenu() {
         val targetX = if (!isMenuOpen) {
+            nullificationLayout.visibility = View.VISIBLE
+            nullificationLayout.isClickable = true
+            nullificationLayout.isFocusable = true
+            nullificationLayout.animate()
+                .alpha(1f)
+                .setDuration(300)
+                .start()
             0f
         } else {
+            nullificationLayout.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .start()
+            nullificationLayout.isClickable = false
+            nullificationLayout.isFocusable = false
             -sideMenuContainer.width.toFloat() - 30f
         }
 

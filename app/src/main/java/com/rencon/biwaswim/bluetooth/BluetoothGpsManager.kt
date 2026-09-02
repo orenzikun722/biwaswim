@@ -32,6 +32,9 @@ class BluetoothGpsManager(
 ) {
     companion object {
         private const val TAG = "BluetoothGpsManager"
+        const val PREFS_NAME = "app_data"
+        const val KEY_PREVIOUSLY_CONNECTED_BT_DEVICES = "previously_connected_bt_devices"
+        const val KEY_LAST_CONNECTED_BT_DEVICE = "last_connected_bt_device"
     }
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -46,6 +49,7 @@ class BluetoothGpsManager(
     private val lineBuffer = NmeaLineBuffer()
 
     private val discoveredDevices = LinkedHashMap<String, DiscoveredBluetoothDevice>()
+    private val scannedAddressesInCurrentDiscovery = mutableSetOf<String>()
     private var isReceiverRegistered = false
     private var isAutoConnectOnDiscovery = false
 
@@ -54,6 +58,50 @@ class BluetoothGpsManager(
 
     val isConnected: Boolean
         get() = sppSession != null && connectionJob?.isActive == true
+
+    /**
+     * 指定されたMACアドレスのデバイスが過去に接続されたことがあるか（またはシステムでペアリング済みか）判定します。
+     */
+    fun isPreviouslyConnected(address: String): Boolean {
+        if (address.isBlank()) return false
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val set = prefs.getStringSet(KEY_PREVIOUSLY_CONNECTED_BT_DEVICES, emptySet()) ?: emptySet()
+            if (set.contains(address)) return true
+            val last = prefs.getString(KEY_LAST_CONNECTED_BT_DEVICE, null)
+            if (last.equals(address, ignoreCase = true)) return true
+
+            // ペアリング済み（Bonded）デバイスも過去に接続・登録されたデバイスとみなす
+            val adapter = bluetoothAdapter
+            if (adapter != null && adapter.isEnabled) {
+                if (adapter.bondedDevices.any { it.address.equals(address, ignoreCase = true) }) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking previously connected device: ${e.message}")
+        }
+        return false
+    }
+
+    /**
+     * 接続成功したデバイスのMACアドレスを SharedPreferences に保存します。
+     */
+    fun markDeviceAsConnected(address: String) {
+        if (address.isBlank()) return
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentSet = HashSet(prefs.getStringSet(KEY_PREVIOUSLY_CONNECTED_BT_DEVICES, emptySet()) ?: emptySet())
+            currentSet.add(address)
+            prefs.edit()
+                .putStringSet(KEY_PREVIOUSLY_CONNECTED_BT_DEVICES, currentSet)
+                .putString(KEY_LAST_CONNECTED_BT_DEVICE, address)
+                .apply()
+            Log.d(TAG, "Saved device as previously connected: $address")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save connected device to preferences: ${e.message}")
+        }
+    }
 
     private val discoveryReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
@@ -76,6 +124,10 @@ class BluetoothGpsManager(
                         }
                         val address = device.address ?: ""
 
+                        if (address.isNotEmpty()) {
+                            scannedAddressesInCurrentDiscovery.add(address)
+                        }
+
                         val item = DiscoveredBluetoothDevice(
                             device = device,
                             name = name,
@@ -92,7 +144,10 @@ class BluetoothGpsManager(
                     listener.onDiscoveryStarted()
                 }
                 BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
-                    Log.d(TAG, "Bluetooth discovery finished. Discovered ${discoveredDevices.size} devices.")
+                    Log.d(
+                        TAG,
+                        "Bluetooth discovery finished. Discovered ${discoveredDevices.size} devices (${scannedAddressesInCurrentDiscovery.size} scanned in range)."
+                    )
                     val sortedList = getSortedDiscoveredDevices()
                     listener.onDiscoveryFinished(sortedList)
 
@@ -105,8 +160,7 @@ class BluetoothGpsManager(
     }
 
     /**
-     * ペアリング済みの Bluetooth デバイス一覧を取得します。
-     * GNSS受信機（QZ1等）が優先されるようにソートします。
+     * ペアリング済みの Bluetooth デバイス一覧を取得します（QZ1から始まるデバイスのみ）。
      */
     @SuppressLint("MissingPermission")
     fun getPairedDevices(): List<BluetoothDevice> {
@@ -114,18 +168,12 @@ class BluetoothGpsManager(
         if (!adapter.isEnabled) return emptyList()
 
         return try {
-            adapter.bondedDevices.sortedWith(
-                compareByDescending<BluetoothDevice> { device ->
-                    val name = device.name ?: ""
-                    name.contains("QZ1", ignoreCase = true) ||
-                            name.contains("GNSS", ignoreCase = true) ||
-                            name.contains("GPS", ignoreCase = true)
-                }.thenBy { it.name ?: "" }
-            ).filter { device ->
-                device.name.contains("QZ1", ignoreCase = true) ||
-                        device.name.contains("GNSS", ignoreCase = true) ||
-                        device.name.contains("GPS", ignoreCase = true)
-            }
+            adapter.bondedDevices.filter { device ->
+                (device.name ?: "").startsWith("QZ1", ignoreCase = true)
+            }.sortedWith(
+                compareByDescending<BluetoothDevice> { isPreviouslyConnected(it.address) }
+                    .thenBy { it.name ?: "" }
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error getting paired devices: ${e.message}")
             emptyList()
@@ -133,19 +181,16 @@ class BluetoothGpsManager(
     }
 
     /**
-     * 検出されたデバイスを電波強度（RSSI）の降順（強い順）でソートして取得します。
-     * QZ1やGNSS機器を優先的に上位に並べます。
+     * 検出されたデバイスのうちQZ1から始まるデバイスのみを、過去の接続履歴、電波強度（RSSI）の降順（強い順）でソートして取得します。
      */
     fun getSortedDiscoveredDevices(): List<DiscoveredBluetoothDevice> {
-        return discoveredDevices.values.sortedWith(
-            compareByDescending<DiscoveredBluetoothDevice> { it.isQz1OrGnss }
+        return discoveredDevices.values.filter { device ->
+            device.name.startsWith("QZ1", ignoreCase = true)
+        }.sortedWith(
+            compareByDescending<DiscoveredBluetoothDevice> { isPreviouslyConnected(it.address) }
                 .thenByDescending { it.rssi }
                 .thenBy { it.name }
-        ).filter { device ->
-            device.name.contains("QZ1", ignoreCase = true) ||
-                    device.name.contains("GNSS", ignoreCase = true) ||
-                    device.name.contains("GPS", ignoreCase = true)
-        }
+        )
     }
 
     /**
@@ -166,18 +211,21 @@ class BluetoothGpsManager(
 
         isAutoConnectOnDiscovery = autoConnect
         discoveredDevices.clear()
+        scannedAddressesInCurrentDiscovery.clear()
 
-        // ペアリング済みデバイスもあらかじめ初期リストに追加（電波強度はスキャンで更新）
+        // ペアリング済みデバイスのうちQZ1から始まるデバイスのみ初期リストに追加（電波強度はスキャンで更新）
         try {
             for (bonded in adapter.bondedDevices) {
                 val name = bonded.name ?: "Unknown"
-                val address = bonded.address ?: ""
-                discoveredDevices[address] = DiscoveredBluetoothDevice(
-                    device = bonded,
-                    name = name,
-                    address = address,
-                    rssi = -100
-                )
+                if (name.startsWith("QZ1", ignoreCase = true)) {
+                    val address = bonded.address ?: ""
+                    discoveredDevices[address] = DiscoveredBluetoothDevice(
+                        device = bonded,
+                        name = name,
+                        address = address,
+                        rssi = -100
+                    )
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get bonded devices during startDiscovery: ${e.message}")
@@ -207,28 +255,47 @@ class BluetoothGpsManager(
         }
     }
 
-    private fun handleAutoConnectAfterDiscovery(devices: List<DiscoveredBluetoothDevice>) {
-        val qz1Devices = devices.filter { it.isQz1OrGnss }
+    /**
+     * スキャン完了時の自動接続判定処理。
+     * 「周囲（電波範囲内）にQZ1デバイスが1台のみ存在し、かつ以前に接続したことがある場合」に自動接続します。
+     */
+    private fun handleAutoConnectAfterDiscovery(allSortedDevices: List<DiscoveredBluetoothDevice>) {
+        // 周囲で実際にスキャン電波（ACTION_FOUND）を受信したQZ1デバイス
+        val nearbyQz1Devices = allSortedDevices.filter {
+            it.address in scannedAddressesInCurrentDiscovery && it.name.startsWith("QZ1", ignoreCase = true)
+        }
+
+        Log.d(
+            TAG,
+            "handleAutoConnectAfterDiscovery: nearby QZ1 total=${nearbyQz1Devices.size}"
+        )
+
         when {
-            qz1Devices.size >= 2 -> {
-                Log.d(TAG, "Multiple QZ1/GNSS devices found (${qz1Devices.size}). Showing selection dialog.")
-                listener.onMultipleDevicesFound(devices)
+            nearbyQz1Devices.size == 1 -> {
+                val singleDevice = nearbyQz1Devices.first()
+                if (isPreviouslyConnected(singleDevice.address)) {
+                    Log.d(
+                        TAG,
+                        "Single QZ1 device found around and previously connected: ${singleDevice.name} (${singleDevice.address}). Auto-connecting."
+                    )
+                    connect(singleDevice.device)
+                } else {
+                    Log.d(
+                        TAG,
+                        "Single QZ1 device found around but NOT previously connected: ${singleDevice.name} (${singleDevice.address}). Showing selection dialog."
+                    )
+                    listener.onMultipleDevicesFound(allSortedDevices)
+                }
             }
-            qz1Devices.size == 1 -> {
-                Log.d(TAG, "Single QZ1/GNSS device found: ${qz1Devices.first().name}. Connecting automatically.")
-                connect(qz1Devices.first().device)
-            }
-            devices.size >= 2 -> {
-                Log.d(TAG, "Multiple Bluetooth devices found (${devices.size}). Showing selection dialog.")
-                listener.onMultipleDevicesFound(devices)
-            }
-            devices.size == 1 -> {
-                Log.d(TAG, "Single Bluetooth device found: ${devices.first().name}. Connecting automatically.")
-                connect(devices.first().device)
+            nearbyQz1Devices.size >= 2 -> {
+                Log.d(
+                    TAG,
+                    "Multiple QZ1 devices found around (${nearbyQz1Devices.size}). Showing selection dialog."
+                )
+                listener.onMultipleDevicesFound(allSortedDevices)
             }
             else -> {
-                Log.d(TAG, "No Bluetooth device found during discovery. Trying paired devices fallback.")
-                connectAuto()
+                Log.d(TAG, "No nearby QZ1 devices found during scan. Auto-connect skipped.")
             }
         }
     }
@@ -301,6 +368,7 @@ class BluetoothGpsManager(
                 Log.d(TAG, "Connecting to ${device.name ?: device.address}...")
                 session.open()
                 Log.d(TAG, "Connected to ${device.name ?: device.address}")
+                markDeviceAsConnected(device.address)
                 listener.onBluetoothConnected(device)
 
                 val stopReason = session.readLoop { chunk ->

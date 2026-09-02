@@ -13,10 +13,11 @@ data class DiscoveredBluetoothDevice(
     val address: String,
     val rssi: Int
 ) {
+    val isQz1: Boolean
+        get() = name.startsWith("QZ1", ignoreCase = true)
+
     val isQz1OrGnss: Boolean
-        get() = name.contains("QZ1", ignoreCase = true) ||
-                name.contains("GNSS", ignoreCase = true) ||
-                name.contains("GPS", ignoreCase = true)
+        get() = isQz1
 }
 
 /**
