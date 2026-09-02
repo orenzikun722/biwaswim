@@ -52,6 +52,7 @@ import com.rencon.biwaswim.nmea.calculateDistance
 import com.rencon.biwaswim.nmea.calculateDistanceBetween
 import com.rencon.biwaswim.nmea.isSwimming
 import com.rencon.biwaswim.nmea.SwimDebugConfig
+import com.rencon.biwaswim.nmea.LocationOffsetManager
 import android.content.res.ColorStateList
 import android.widget.Toast
 import com.rencon.biwaswim.notification.sendNotification
@@ -297,6 +298,8 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     lateinit var partyId: String
 
     // --- パーティ位置送信および受信機接続状態 ---
+    private var lastRawLatitude: Double? = null
+    private var lastRawLongitude: Double? = null
     private var lastKnownLatitude: Double? = null
     private var lastKnownLongitude: Double? = null
     private var partyLocationSenderJob: Job? = null
@@ -844,6 +847,7 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         })
         disasterWsManager.connect()
 
+        LocationOffsetManager.init(this)
 
         openSettingsButton = findViewById<Button>(R.id.openSettings)
         openSettingsButton.setOnClickListener {
@@ -948,6 +952,12 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
             showSideMenu()
             disasterWsManager.simulateAlert(isEEW = false, scale = 30)
             Toast.makeText(this, "地震情報（震度3）をシミュレーション発信しました", Toast.LENGTH_SHORT).show()
+        }
+
+        val btnDebugLocationOffset = findViewById<Button>(R.id.btnDebugLocationOffset)
+        btnDebugLocationOffset.setOnClickListener {
+            showSideMenu()
+            showLocationOffsetDialog()
         }
 
         MapManager.attributionTextView = findViewById<TextView>(R.id.attribution)
@@ -1329,11 +1339,136 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         disasterUrlRow.addView(changeUrlButton)
         layout.addView(disasterUrlRow)
 
+        // --- 位置情報オフセット設定セクション ---
+        val offsetSectionTitle = TextView(this).apply {
+            text = getString(R.string.location_offset_settings)
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, (20 * resources.displayMetrics.density).toInt(), 0, (6 * resources.displayMetrics.density).toInt())
+        }
+        layout.addView(offsetSectionTitle)
+
+        val offsetRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        fun getOffsetDisplayText(): String {
+            return if (LocationOffsetManager.isOffsetActive) {
+                String.format(Locale.US, "Lat: %+.6f\nLon: %+.6f", LocationOffsetManager.latitudeOffset, LocationOffsetManager.longitudeOffset)
+            } else {
+                getString(R.string.location_offset_none)
+            }
+        }
+        val offsetDisplay = TextView(this).apply {
+            text = getOffsetDisplayText()
+            textSize = 13f
+            setTextColor(Color.DKGRAY)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val changeOffsetButton = MaterialButton(this).apply {
+            text = getString(R.string.change)
+            setOnClickListener {
+                showLocationOffsetDialog {
+                    offsetDisplay.text = getOffsetDisplayText()
+                }
+            }
+        }
+        offsetRow.addView(offsetDisplay)
+        offsetRow.addView(changeOffsetButton)
+        layout.addView(offsetRow)
+
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.settings))
             .setView(layout)
             .setPositiveButton(getString(R.string.close), null)
             .show()
+    }
+
+    private fun showLocationOffsetDialog(onUpdated: (() -> Unit)? = null) {
+        val padH = (24 * resources.displayMetrics.density).toInt()
+        val padV = (12 * resources.displayMetrics.density).toInt()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padH, padV, padH, 0)
+        }
+
+        val latLabel = TextView(this).apply {
+            text = getString(R.string.location_offset_lat_label)
+            textSize = 14f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+        val latInput = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                    android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                    android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+            setText(LocationOffsetManager.latitudeOffset.toString())
+            hint = "0.0"
+        }
+        container.addView(latLabel)
+        container.addView(latInput)
+
+        val lonLabel = TextView(this).apply {
+            text = getString(R.string.location_offset_lon_label)
+            textSize = 14f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        val lonInput = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                    android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                    android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+            setText(LocationOffsetManager.longitudeOffset.toString())
+            hint = "0.0"
+        }
+        container.addView(lonLabel)
+        container.addView(lonInput)
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.location_offset_dialog_title))
+            .setView(container)
+            .setPositiveButton(getString(R.string.save)) { _, _ ->
+                val latStr = latInput.text.toString().trim()
+                val lonStr = lonInput.text.toString().trim()
+                val newLatOffset = latStr.toDoubleOrNull()
+                val newLonOffset = lonStr.toDoubleOrNull()
+
+                if (newLatOffset != null && newLonOffset != null) {
+                    LocationOffsetManager.setOffset(this, newLatOffset, newLonOffset)
+                    applyCurrentOffsetToLastLocation()
+                    Toast.makeText(this, getString(R.string.location_offset_saved), Toast.LENGTH_SHORT).show()
+                    onUpdated?.invoke()
+                } else {
+                    Toast.makeText(this, getString(R.string.location_offset_invalid), Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNeutralButton(getString(R.string.location_offset_reset)) { _, _ ->
+                LocationOffsetManager.resetOffset(this)
+                applyCurrentOffsetToLastLocation()
+                Toast.makeText(this, getString(R.string.location_offset_saved), Toast.LENGTH_SHORT).show()
+                onUpdated?.invoke()
+            }
+            .setNegativeButton(getString(R.string.cancel), null)
+            .show()
+    }
+
+    private fun applyCurrentOffsetToLastLocation() {
+        val rawLat = lastRawLatitude
+        val rawLon = lastRawLongitude
+        if (rawLat != null && rawLon != null) {
+            val (lat, lon) = LocationOffsetManager.applyOffset(rawLat, rawLon)
+            lastKnownLatitude = lat
+            lastKnownLongitude = lon
+            val distance = calculateDistance(context, lat, lon)
+            val inWater = isSwimming(context, lat, lon)
+            mapManager.updateLocation(lat, lon)
+            if (::distanceFromShore.isInitialized) {
+                distanceFromShore.text = getString(R.string.distance_text, distance.toInt().toString())
+            }
+        }
     }
 
 
@@ -1692,8 +1827,12 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
         when (detail) {
             is NmeaParseDetail.LocationUpdate -> {
                 health.lastValidLocationTime = now
-                val lat = detail.location.latitude
-                val lon = detail.location.longitude
+                val rawLat = detail.location.latitude
+                val rawLon = detail.location.longitude
+                lastRawLatitude = rawLat
+                lastRawLongitude = rawLon
+
+                val (lat, lon) = LocationOffsetManager.applyOffset(rawLat, rawLon)
                 lastKnownLatitude = lat
                 lastKnownLongitude = lon
 
@@ -1851,8 +1990,11 @@ class MainActivity : AppCompatActivity(), GpsConnectionService.ServiceListener {
     }
 
     override fun onLocationReceived(location: GpsLocation) {
-        lastKnownLatitude = location.latitude
-        lastKnownLongitude = location.longitude
+        lastRawLatitude = location.latitude
+        lastRawLongitude = location.longitude
+        val (lat, lon) = LocationOffsetManager.applyOffset(location.latitude, location.longitude)
+        lastKnownLatitude = lat
+        lastKnownLongitude = lon
         // handleNmeaDetail で処理されるためここでは追加処理なし
     }
 

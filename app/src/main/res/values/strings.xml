@@ -124,4 +124,15 @@
     <string name="disaster_max_scale">最大予想震度</string>
     <string name="disaster_event_time">発生/発報時刻</string>
     <string name="disaster_affected_areas">予想震度対象地域</string>
+    <string name="location_offset_settings">位置情報オフセット設定</string>
+    <string name="location_offset_label">緯度・経度オフセット</string>
+    <string name="location_offset_none">なし (0.0, 0.0)</string>
+    <string name="location_offset_display">緯度: %1$+f, 経度: %2$+f</string>
+    <string name="location_offset_dialog_title">位置情報オフセット設定</string>
+    <string name="location_offset_lat_label">緯度オフセット (度)</string>
+    <string name="location_offset_lon_label">経度オフセット (度)</string>
+    <string name="location_offset_reset">0にリセット</string>
+    <string name="location_offset_saved">位置オフセットを更新しました</string>
+    <string name="location_offset_invalid">数値を正しく入力してください</string>
+    <string name="debug_location_offset">📍 位置オフセット設定</string>
 </resources>
